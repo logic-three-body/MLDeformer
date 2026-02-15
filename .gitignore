@@ -1,0 +1,41 @@
+﻿# Unreal Engine generated folders
+Binaries/
+Build/*/FileOpenOrder/
+DerivedDataCache/
+Intermediate/
+Saved/
+
+# Visual Studio / Rider / VSCode
+.vs/
+.idea/
+.vscode/
+*.VC.db
+*.VC.opendb
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Unreal generated project files
+*.opensdf
+*.sdf
+*.tmp
+*.xcodeproj
+*.xcworkspace
+*.pidb
+*.ipch
+
+# Logs and crash dumps
+*.log
+*.dmp
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Optional: local tooling artifacts
+docs/_tmp_pdf_extract.txt
