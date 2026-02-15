@@ -1,38 +1,61 @@
-﻿# UE5 ML Deformer 主链路源码映射（Train -> Infer）
+﻿# UE5 MLDeformer 主链路导航（Train -> Infer -> Render）
 
-本文固定 UE 版本基线为 `5.5`，并使用统一映射字段：
+> 文档角色：本文件是“导航总线”。
+
+## 1. 一句话主链
+`Editor Train` -> `Model Train/Load` -> `Runtime Tick` -> `MeshDeformer Enqueue` -> `Optimus/ComputeGraph Dispatch` -> `Groom DataInterface` -> `Shader/RDG`。
+
+## 2. 图文架构入口
+- 架构图文档：`docs/02_code_map/README_UE5_Architecture_Diagram_CN.md`
+
+## 3. 深度解析入口（分层）
+1. `docs/02_code_map/deep_dive/README_UE5_TopDown_Source_Atlas_CN.md`
+2. `docs/02_code_map/deep_dive/README_L1_Module_Startup_CN.md`
+3. `docs/02_code_map/deep_dive/README_L2_Editor_Train_CN.md`
+4. `docs/02_code_map/deep_dive/README_L3_Runtime_Infer_CN.md`
+5. `docs/02_code_map/deep_dive/README_L4_Engine_MeshDeformer_CN.md`
+6. `docs/02_code_map/deep_dive/README_L5_Optimus_ComputeGraph_CN.md`
+7. `docs/02_code_map/deep_dive/README_L6_DataInterface_Groom_CN.md`
+8. `docs/02_code_map/deep_dive/README_L7_Shader_RDG_Profiling_CN.md`
+
+## 4. 深度解析入口（逐行核心代码）
+1. `docs/02_code_map/core_line_by_line/README_Core_LineByLine_Index_CN.md`
+2. `docs/02_code_map/core_line_by_line/README_Core_01_MLDeformerComponent_CN.md`
+3. `docs/02_code_map/core_line_by_line/README_Core_02_MLDeformerModelInstance_CN.md`
+4. `docs/02_code_map/core_line_by_line/README_Core_03_NeuralMorphModelInstance_CN.md`
+5. `docs/02_code_map/core_line_by_line/README_Core_04_NearestNeighborModelInstance_CN.md`
+6. `docs/02_code_map/core_line_by_line/README_Core_05_OptimusDeformerInstance_CN.md`
+7. `docs/02_code_map/core_line_by_line/README_Core_06_ComputeGraph_Dispatch_CN.md`
+8. `docs/02_code_map/core_line_by_line/README_Core_07_GroomWriteDataInterface_CN.md`
+
+## 5. 固定源码解析基线（函数级）
+1. `FMLDeformerEditorToolkit::Train` / `HandleTrainingResult`。
+2. `FMLDeformerEditorModel::Train` + `TrainModel<T>`。
+3. `FNeuralMorphEditorModel::Train` / `LoadTrainedNetwork`。
+4. `FNearestNeighborEditorModel::Train` / `OnPostTraining` / `LoadTrainedNetwork`。
+5. `UMLDeformerComponent::TickComponent` -> `UMLDeformerModelInstance::Tick`。
+6. `UNeuralMorphModelInstance::SetupInputs` / `Execute` / `NetworkInstance->Run()`。
+7. `UNearestNeighborModelInstance::SetupInputs` / `Tick` / `RunNearestNeighborModel`。
+8. `USkinnedMeshComponent::CreateMeshDeformerInstances` / `EnqueueWork`。
+9. `UOptimusDeformer::Compile` / `CreateOptimusInstance`。
+10. `UOptimusDeformerInstance::SetupFromDeformer` / `EnqueueWork`。
+11. `FComputeGraphInstance::EnqueueWork` 与 `ComputeGraphWorker` 的 `GatherDispatchData`。
+12. Groom: `DeformerGroomComponentSource.cpp`、`DeformerDataInterfaceGroom*.cpp`、`GroomDeformerBuilder.cpp`、`DeformerDataInterfaceGroom*.ush`。
+
+## 6. 模型专题入口
+- NMM：`docs/02_code_map/README_NMM_TheoryCode_CN.md`
+- NNM：`docs/02_code_map/README_NNM_TheoryCode_CN.md`
+- Groom：`docs/02_code_map/README_GroomDeformer_TheoryCode_CN.md`
+
+## 7. 统一字段约定
+1. 映射表字段：
 `concept | paper_ref | ue_module | file_path | symbol | train_or_infer | explanation | validation`
+2. 分层链路字段：
+`layer | parent_symbol | child_symbol | file_path | thread_context | data_carrier | failure_point | probe`
 
-## 1. 训练入口链
-
-| concept | paper_ref | ue_module | file_path | symbol | train_or_infer | explanation | validation |
-|---|---|---|---|---|---|---|---|
-| Editor 训练触发 | ML pipeline orchestration | MLDeformerFrameworkEditor | `D:/UE/UnrealEngine/Engine/Plugins/Animation/MLDeformer/MLDeformerFramework/Source/MLDeformerFrameworkEditor/Private/MLDeformerEditorToolkit.cpp` | `FMLDeformerEditorToolkit::Train` | train | 统一处理预检查、训练执行、结果处理与刷新 | 点击编辑器 Train 按钮，观察日志和资产更新 |
-| 训练策略分派 | Training abstraction | MLDeformerFrameworkEditor | `D:/UE/UnrealEngine/Engine/Plugins/Animation/MLDeformer/MLDeformerFramework/Source/MLDeformerFrameworkEditor/Public/MLDeformerEditorModel.h` | `TrainModel<TrainingModelClass>` | train | 通过模板与派生 TrainingModel 连接 Python/Blueprint 训练实现 | 缺少派生类时应返回 `FailPythonError` |
-| 模型级训练入口 | Model-specific training | NeuralMorph / NearestNeighbor / VertexDelta Editor | `.../NeuralMorphEditorModel.cpp`, `.../NearestNeighborEditorModel.cpp`, `.../VertexDeltaEditorModel.cpp` | `Train` | train | 各模型覆盖基础 Train，注入各自数据与后处理逻辑 | 比较不同模型 Train 返回码与产物 |
-
-## 2. Runtime 推理主链
-
-| concept | paper_ref | ue_module | file_path | symbol | train_or_infer | explanation | validation |
-|---|---|---|---|---|---|---|---|
-| 每帧推理入口 | Online inference loop | MLDeformerFramework | `D:/UE/UnrealEngine/Engine/Plugins/Animation/MLDeformer/MLDeformerFramework/Source/MLDeformerFramework/Private/MLDeformerComponent.cpp` | `UMLDeformerComponent::TickComponent` | infer | 组件 Tick 中调用 ModelInstance，并统计 `STAT_MLDeformerInference` | `stat MLDeformer` 查看推理时间 |
-| 基础实例调度 | Inference state machine | MLDeformerFramework | `D:/UE/UnrealEngine/Engine/Plugins/Animation/MLDeformer/MLDeformerFramework/Source/MLDeformerFramework/Private/MLDeformerModelInstance.cpp` | `UMLDeformerModelInstance::Tick` | infer | 完成 post-init、输入准备、`Execute` 调用与 zero-weight 回退 | 将权重设为 0 验证 `HandleZeroModelWeight` 路径 |
-| 输入装配 | Input feature construction | MLDeformerFramework | `D:/UE/UnrealEngine/Engine/Plugins/Animation/MLDeformer/MLDeformerFramework/Source/MLDeformerFramework/Private/MLDeformerModelInstance.cpp` | `SetNeuralNetworkInputValues`, `SetBoneTransforms`, `SetCurveValues` | infer | 从骨骼与曲线读取输入并写入推理缓冲 | 验证骨骼/曲线数量与网络输入维度一致 |
-
-## 3. 模型分支推理
-
-| concept | paper_ref | ue_module | file_path | symbol | train_or_infer | explanation | validation |
-|---|---|---|---|---|---|---|---|
-| NMM 执行 | Morph-weight regression | NeuralMorphModel | `D:/UE/UnrealEngine/Engine/Plugins/Animation/MLDeformer/NeuralMorphModel/Source/NeuralMorphModel/Private/NeuralMorphModelInstance.cpp` | `SetupInputs`, `Execute` | infer | 网络运行后写回 Morph 权重并按训练范围 clamp | 异常输入下观察是否发生权重爆炸 |
-| NNM 执行 | NN retrieval augmentation | NearestNeighborModel | `D:/UE/UnrealEngine/Engine/Plugins/Animation/MLDeformer/NearestNeighborModel/Source/NearestNeighborModel/Private/NearestNeighborModelInstance.cpp` | `SetupInputs`, `Execute`, `Tick` | infer | 先跑优化网络，再执行邻域模型融合细节 | 比较启停 NNM 时细节表现差异 |
-| Vertex Delta 执行 | Direct delta path | VertexDeltaModel | `D:/UE/UnrealEngine/Engine/Plugins/Animation/MLDeformer/VertexDeltaModel/Source/VertexDeltaModel/Private/VertexDeltaModelInstance.cpp` | `Execute` | infer | 作为早期模型分支，对照理解整体架构演进 | 仅作对照，不作为首轮重点 |
-
-## 4. 训练产物加载（关键）
-- NMM：`NeuralMorphEditorModel::LoadTrainedNetwork` 从 `onnx` 衍生 `nmn` 并加载 `UNeuralMorphNetwork`。
-- NNM：`NearestNeighborEditorModel::LoadTrainedNetwork` 加载 `NearestNeighborModel.ubnne` 并初始化实例。
-- VertexDelta：`VertexDeltaEditorModel::LoadTrainedNetwork` 将 onnx 读入 `UNNEModelData`。
-
-## 5. 实操建议
-1. 调试训练失败时先看 `TrainModel<>()` 返回码与模型 `Train` 预检查。
-2. 调试推理异常时先看 `UMLDeformerModelInstance::Tick` 条件是否成立（兼容性、输入、权重）。
-3. 始终把视觉结果与 `STAT_MLDeformerInference` 和内存数据一起看，避免只看单一指标。
+## 8. 快速验收清单
+1. 分层文档具备“入口符号 -> 下一层符号”映射。
+2. 逐行文档具备“line_range -> code_focus -> probe”映射。
+3. NMM/NNM/Groom 均覆盖训练链 + 推理链 + 关键数据结构。
+4. 文档包含 `STAT_MLDeformerInference` 与 `TRACE_CPUPROFILER_EVENT_SCOPE` / `CSV_SCOPED_TIMING_STAT`。
+5. 所有路径可在 `D:/UE/UnrealEngine` 定位。
