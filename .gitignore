@@ -39,3 +39,25 @@ Thumbs.db
 
 # Optional: local tooling artifacts
 docs/_tmp_pdf_extract.txt
+
+# Oversize assets (>95MB) - ignored for GitHub direct push
+Content/Characters/Emil/GeomCache/MLD_Train/GC_upperBody_Clothing_7000.uasset
+Content/Characters/Emil/GeomCache/MLD_Train/GC_lowerCostume_7500.uasset
+Content/Characters/Emil/GeomCache/MLD_Train/GC_upperBodyFlesh_5kGreedyROM.uasset
+Content/Characters/Emil/GeomCache/Sequence/GC_Emil_Musculoskeletal_cinematic.uasset
+Content/Characters/Ada_MH/Animation/MLD_Train/AS_Ada_train.uasset
+Content/Characters/Emil/GeomCache/MLD_test/GC_Emil_cinematic.uasset
+Content/Characters/Emil/Deformers/MLD_NN_upperCostume.uasset
+Content/Characters/Emil/Deformers/MLD_NN_lowerCostume.uasset
+Content/ArtSource.zip
+Content/Global/DemoRoom/Deformers/MLD_NMMl_flesh_BoneMasks+Grps+LODs.uasset
+Content/Global/DemoRoom/Deformers/MLD_upperBody_5kROM.uasset
+Content/Characters/Emil/Deformers/MLD_NMMl_flesh_upperBody.uasset
+Content/Characters/Emil/Textures/T_Emil_Head_N.uasset
+Content/Global/DemoRoom/Deformers/MLD_upperBody_5kROM+64.uasset
+Content/Global/DemoRoom/Deformers/MLD_NMMl_flesh_BoneMasks.uasset
+Content/Characters/Emil/GeomCache/MLD_Train/GC_NN_upperCostume_0.uasset
+Content/Characters/Emil/Textures/T_Emil_Body_N.uasset
+Content/Characters/Emil/GeomCache/MLD_Train/GC_NN_lowerCostume_0.uasset
+Content/Characters/Ada_MH/Deformers/MLD_Ada_FaceRig.uasset
+Content/Characters/Emil/GeomCache/MLD_Train/GC_upperBodyFlesh_hero64.uasset
