@@ -61,3 +61,8 @@ Content/Characters/Emil/Textures/T_Emil_Body_N.uasset
 Content/Characters/Emil/GeomCache/MLD_Train/GC_NN_lowerCostume_0.uasset
 Content/Characters/Ada_MH/Deformers/MLD_Ada_FaceRig.uasset
 Content/Characters/Emil/GeomCache/MLD_Train/GC_upperBodyFlesh_hero64.uasset
+
+# Prototype runtime state
+prototype/state/
+prototype/.ipynb_checkpoints/
+

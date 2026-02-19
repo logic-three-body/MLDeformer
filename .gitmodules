@@ -1,0 +1,18 @@
+[submodule "prototype/third_party/NeuralHaircut"]
+	path = prototype/third_party/NeuralHaircut
+	url = https://github.com/egorzakharov/NeuralHaircut.git
+[submodule "prototype/third_party/neural-blend-shapes"]
+	path = prototype/third_party/neural-blend-shapes
+	url = https://github.com/PeizhuoLi/neural-blend-shapes.git
+[submodule "prototype/third_party/DeePSD"]
+	path = prototype/third_party/DeePSD
+	url = https://github.com/hbertiche/DeePSD.git
+[submodule "prototype/third_party/PBNS"]
+	path = prototype/third_party/PBNS
+	url = https://github.com/hbertiche/PBNS.git
+[submodule "prototype/third_party/NeuralClothSim"]
+	path = prototype/third_party/NeuralClothSim
+	url = https://github.com/hbertiche/NeuralClothSim.git
+[submodule "prototype/third_party/fast-snarf"]
+	path = prototype/third_party/fast-snarf
+	url = https://github.com/xuchen-ethz/fast-snarf.git

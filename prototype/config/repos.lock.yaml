@@ -1,0 +1,45 @@
+version: 1
+generated_at: '2026-02-19T08:25:45Z'
+repos:
+- name: DeePSD
+  repo_url: https://github.com/hbertiche/DeePSD.git
+  branch: master
+  commit: b5b32da4beb874a2ae7085e727453aaa50720c2b
+  subdir: prototype/third_party/DeePSD
+  license: See upstream LICENSE
+  notes: Pose-space deformation prior.
+- name: fast-snarf
+  repo_url: https://github.com/xuchen-ethz/fast-snarf.git
+  branch: master
+  commit: 1f8361c04717e2ca9246e8044b692c4ef04ff89f
+  subdir: prototype/third_party/fast-snarf
+  license: See upstream LICENSE
+  notes: Dynamic registration/binding related reference.
+- name: neural-blend-shapes
+  repo_url: https://github.com/PeizhuoLi/neural-blend-shapes.git
+  branch: main
+  commit: 6d108309bf6892240e5c15b527bc4f5178afed9a
+  subdir: prototype/third_party/neural-blend-shapes
+  license: See upstream LICENSE
+  notes: NMM-related baseline and blendshape learning reference.
+- name: NeuralClothSim
+  repo_url: https://github.com/hbertiche/NeuralClothSim.git
+  branch: main
+  commit: 237eb2c37ff65971cfcff111e95ef35933513ed8
+  subdir: prototype/third_party/NeuralClothSim
+  license: See upstream LICENSE
+  notes: Cloth deformation reference for costume-like behavior.
+- name: NeuralHaircut
+  repo_url: https://github.com/egorzakharov/NeuralHaircut.git
+  branch: main
+  commit: 424a24ead7f8360b42a8444261945dcdbb6f1fd4
+  subdir: prototype/third_party/NeuralHaircut
+  license: See upstream LICENSE
+  notes: Groom/hair reconstruction and rendering reference.
+- name: PBNS
+  repo_url: https://github.com/hbertiche/PBNS.git
+  branch: master
+  commit: 39d84df468ff36e64c13067ff37cc49ebe7e29aa
+  subdir: prototype/third_party/PBNS
+  license: See upstream LICENSE
+  notes: Pose-driven blendshape style baseline.

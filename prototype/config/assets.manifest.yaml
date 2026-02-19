@@ -1,0 +1,67 @@
+﻿version: 1
+assets:
+  - asset_id: mesh_spot_obj
+    source: Khronos glTF Sample Models
+    type: mesh
+    gated: false
+    auth_mode: public
+    checksum: ""
+    target_path: raw/public/mesh/Box.gltf
+    status: planned
+    download:
+      url: https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Box/glTF/Box.gltf
+
+  - asset_id: mesh_cube_obj
+    source: Khronos glTF Sample Models
+    type: mesh
+    gated: false
+    auth_mode: public
+    checksum: ""
+    target_path: raw/public/mesh/CesiumMan.gltf
+    status: planned
+    download:
+      url: https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/CesiumMan/glTF/CesiumMan.gltf
+
+  - asset_id: anim_fox_gltf
+    source: Khronos glTF Sample Models
+    type: animation
+    gated: false
+    auth_mode: public
+    checksum: ""
+    target_path: raw/public/animation/Fox.gltf
+    status: planned
+    download:
+      url: https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Fox/glTF/Fox.gltf
+
+  - asset_id: amass_smpl_sequences
+    source: AMASS
+    type: animation
+    gated: true
+    auth_mode: manual:amass_registration
+    checksum: ""
+    target_path: raw/gated/amass/
+    status: planned
+    download:
+      url: ""
+
+  - asset_id: cape_cloth_dataset
+    source: CAPE
+    type: cloth
+    gated: true
+    auth_mode: manual:cape_registration
+    checksum: ""
+    target_path: raw/gated/cape/
+    status: planned
+    download:
+      url: ""
+
+  - asset_id: ue_groom_reference_pack
+    source: Epic/Fab
+    type: groom
+    gated: true
+    auth_mode: manual:epic_login
+    checksum: ""
+    target_path: raw/gated/groom/
+    status: planned
+    download:
+      url: ""

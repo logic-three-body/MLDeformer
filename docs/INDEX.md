@@ -48,11 +48,22 @@
 
 ### 2.7 `docs/05_skill_analogy`
 - `docs/05_skill_analogy/README_Skill_Analogy_Matrix_CN.md`
+- `docs/05_skill_analogy/README_Prototype_Skill_Summary_CN.md`
 - `docs/05_skill_analogy/skill-ue5-mldeformer-train/SKILL.md`
 - `docs/05_skill_analogy/skill-ue5-groom-deformer-debug/SKILL.md`
+- `docs/05_skill_analogy/skill-prototype-data-acquisition/SKILL.md`
+- `docs/05_skill_analogy/skill-prototype-wsl-train-orchestrator/SKILL.md`
+- `docs/05_skill_analogy/skill-prototype-win-infer-viz/SKILL.md`
 
 ### 2.8 `docs/06_appendix`
 - `docs/06_appendix/README_Source_References_CN.md`
+
+### 2.9 仓库根目录 `prototype`（docs 外的实现目录）
+- `prototype/README.md`
+- `prototype/config/repos.lock.yaml`
+- `prototype/config/assets.manifest.yaml`
+- `prototype/config/pipeline.defaults.yaml`
+- `prototype/scripts/run_all.ps1`
 
 ## 3. 说明
 - `docs/references` 已删除，不再作为本仓库目录的一部分。

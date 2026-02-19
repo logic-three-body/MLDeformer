@@ -10,6 +10,7 @@
 4. 分层深度：`docs/02_code_map/deep_dive/README_UE5_TopDown_Source_Atlas_CN.md`
 5. 核心逐行：`docs/02_code_map/core_line_by_line/README_Core_LineByLine_Index_CN.md`
 6. 实操文档：数据管线 + 训练推理 + 调试
+7. 原型闭环：`prototype/README.md`
 
 ## 2. 分层入口
 
@@ -50,14 +51,25 @@
 - `docs/04_train_infer/README_UE5_MLDeformer_TrainInfer_CN.md`
 - `docs/04_train_infer/README_Profiling_And_Debug_CN.md`
 
+### Prototype 层（WSL 训练 + Windows 推理）
+- `prototype/README.md`
+- `prototype/config/repos.lock.yaml`
+- `prototype/config/assets.manifest.yaml`
+- `prototype/scripts/run_all.ps1`
+
 ### Skill 与附录层
 - `docs/05_skill_analogy/README_Skill_Analogy_Matrix_CN.md`
+- `docs/05_skill_analogy/README_Prototype_Skill_Summary_CN.md`
 - `docs/05_skill_analogy/skill-ue5-mldeformer-train/SKILL.md`
 - `docs/05_skill_analogy/skill-ue5-groom-deformer-debug/SKILL.md`
+- `docs/05_skill_analogy/skill-prototype-data-acquisition/SKILL.md`
+- `docs/05_skill_analogy/skill-prototype-wsl-train-orchestrator/SKILL.md`
+- `docs/05_skill_analogy/skill-prototype-win-infer-viz/SKILL.md`
 - `docs/06_appendix/README_Source_References_CN.md`
 
 ## 3. 变更说明
 - `docs/references` 已移除。
+- 新增 `prototype/` 用于跨平台最小闭环验证。
 
 ## 4. 字段约定
 1. 映射字段：`concept | paper_ref | ue_module | file_path | symbol | train_or_infer | explanation | validation`

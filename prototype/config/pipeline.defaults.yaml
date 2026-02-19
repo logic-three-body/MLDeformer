@@ -1,0 +1,33 @@
+﻿version: 1
+ue:
+  ue_root: D:/UE/UnrealEngine
+  engine_association: "5.5"
+paths:
+  windows_data_root: D:/MLDPrototypeData
+  wsl_data_root: /root/Project/MLDPrototypeData
+  asset_manifest: prototype/config/assets.manifest.yaml
+  repos_lock: prototype/config/repos.lock.yaml
+thresholds:
+  github_direct_upload_max_mb: 95
+  mesh_topology_hash_bytes: 8388608
+training:
+  default_mode: smoke
+  gpu_ids: "0,1"
+  smoke_minutes:
+    nmm: 45
+    nnm: 45
+    groom: 60
+  methods:
+    - nmm
+    - nnm
+    - groom
+inference:
+  default_samples: 32
+  expected_latency_ms:
+    nmm: 2.5
+    nnm: 3.5
+    groom: 4.5
+reports:
+  dataset_manifest: processed/dataset_manifest.jsonl
+  train_report: artifacts/train/<method>/train_report.json
+  infer_report: artifacts/infer/<method>/infer_report.json
