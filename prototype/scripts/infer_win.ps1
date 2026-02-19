@@ -6,6 +6,15 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Write-Utf8NoBom {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)][string]$Content
+  )
+  $encoding = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllText($Path, $Content, $encoding)
+}
+
 if ([string]::IsNullOrWhiteSpace($ArtifactRoot)) {
   $ArtifactRoot = Join-Path $DataRoot "artifacts"
 }
@@ -48,15 +57,15 @@ foreach ($file in $trainReports) {
   New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 
   $reportPath = Join-Path $outDir "infer_report.json"
-  $report | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 $reportPath
+  Write-Utf8NoBom -Path $reportPath -Content ($report | ConvertTo-Json -Depth 8)
 
   $csvPath = Join-Path $outDir "pred_vs_gt.csv"
-  "frame,gt,pred,abs_err" | Set-Content -Encoding UTF8 $csvPath
+  Write-Utf8NoBom -Path $csvPath -Content "frame,gt,pred,abs_err`n"
   0..15 | ForEach-Object {
     $gt = [Math]::Sin($_ / 3.0)
     $pred = $gt + ((Get-Random -Minimum -5 -Maximum 6) / 1000.0)
     $err = [Math]::Abs($gt - $pred)
-    "$_,$([Math]::Round($gt,6)),$([Math]::Round($pred,6)),$([Math]::Round($err,6))" | Add-Content -Encoding UTF8 $csvPath
+    Add-Content -Encoding UTF8 $csvPath "$_,$([Math]::Round($gt,6)),$([Math]::Round($pred,6)),$([Math]::Round($err,6))"
   }
 
   $inferIndex += [ordered]@{
@@ -69,6 +78,6 @@ foreach ($file in $trainReports) {
 
 $indexPath = Join-Path $OutputRoot "infer/infer_reports_index.json"
 New-Item -ItemType Directory -Path (Split-Path $indexPath) -Force | Out-Null
-@{ reports = $inferIndex } | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 $indexPath
+Write-Utf8NoBom -Path $indexPath -Content (@{ reports = $inferIndex } | ConvertTo-Json -Depth 8)
 
 Write-Host "[infer_win] reports generated: $indexPath"
