@@ -1,0 +1,520 @@
+﻿param(
+    [ValidateSet("preflight", "houdini", "convert", "ue_import", "ue_setup", "train", "infer", "report", "full")]
+    [string]$Stage = "full",
+
+    [ValidateSet("smoke", "full")]
+    [string]$Profile = "smoke",
+
+    [string]$Config = "pipeline/hou2ue/config/pipeline.yaml",
+
+    [string]$OutRoot = "pipeline/hou2ue/workspace",
+
+    [string]$RunDir = "",
+
+    [int]$NoActivityMinutes = 30,
+
+    [int]$RepeatedErrorThreshold = 6,
+
+    [int]$HoudiniMaxMinutes = 120
+)
+
+$ErrorActionPreference = "Stop"
+
+function Resolve-AbsolutePath([string]$PathValue, [string]$BaseDir) {
+    if ([string]::IsNullOrWhiteSpace($PathValue)) {
+        return ""
+    }
+    if ([System.IO.Path]::IsPathRooted($PathValue)) {
+        return [System.IO.Path]::GetFullPath($PathValue)
+    }
+    return [System.IO.Path]::GetFullPath((Join-Path $BaseDir $PathValue))
+}
+
+function Assert-CommandOrPath([string]$ExeOrCmd, [string]$DisplayName) {
+    if ([string]::IsNullOrWhiteSpace($ExeOrCmd)) {
+        throw "$DisplayName is not configured."
+    }
+
+    if (Test-Path $ExeOrCmd) {
+        return
+    }
+
+    $cmd = Get-Command $ExeOrCmd -ErrorAction SilentlyContinue
+    if (-not $cmd) {
+        throw "$DisplayName not found: $ExeOrCmd"
+    }
+}
+
+function Get-StageTimeoutMinutes([string]$StageName) {
+    switch ($StageName) {
+        "preflight" { return 30 }
+        "houdini" { return $HoudiniMaxMinutes }
+        "convert" { return 90 }
+        "ue_import" { return 90 }
+        "ue_setup" { return 60 }
+        "train" { return 240 }
+        "infer" { return 240 }
+        "report" { return 30 }
+        default { return 120 }
+    }
+}
+
+function Get-LogTail([string]$Path, [int]$TailLines = 40) {
+    if (-not (Test-Path $Path)) {
+        return ""
+    }
+    try {
+        return (Get-Content -LiteralPath $Path -Tail $TailLines -ErrorAction SilentlyContinue) -join "`n"
+    }
+    catch {
+        return ""
+    }
+}
+
+function Convert-ToQuotedArgs([string[]]$InputArgs) {
+    $encoded = @()
+    foreach ($arg in $InputArgs) {
+        if ($null -eq $arg) {
+            $encoded += '""'
+            continue
+        }
+
+        $value = [string]$arg
+        if ($value -eq "") {
+            $encoded += '""'
+            continue
+        }
+
+        if ($value -match '[\s"]') {
+            $escaped = $value.Replace('"', '\"')
+            $encoded += '"' + $escaped + '"'
+        }
+        else {
+            $encoded += $value
+        }
+    }
+
+    return $encoded
+}
+
+function Get-RepeatedErrorLine([string]$Path, [int]$Threshold) {
+    if (-not (Test-Path $Path)) {
+        return $null
+    }
+
+    try {
+        $lines = Get-Content -LiteralPath $Path -Tail 400 -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.Trim() } |
+            Where-Object {
+                -not [string]::IsNullOrWhiteSpace($_) -and
+                $_ -match "(?i)(error|exception|traceback|fatal|failed|assert)"
+            }
+
+        if (-not $lines -or $lines.Count -eq 0) {
+            return $null
+        }
+
+        $top = $lines | Group-Object | Sort-Object Count -Descending | Select-Object -First 1
+        if ($null -ne $top -and [int]$top.Count -ge $Threshold) {
+            return [string]$top.Name
+        }
+    }
+    catch {
+        return $null
+    }
+
+    return $null
+}
+
+function Get-ProcessIdMapByName([string[]]$Names) {
+    $map = @{}
+    if ($null -eq $Names -or $Names.Count -eq 0) {
+        return $map
+    }
+
+    $procs = Get-Process -Name $Names -ErrorAction SilentlyContinue
+    foreach ($p in $procs) {
+        $map[[string]$p.Id] = $true
+    }
+    return $map
+}
+
+function Stop-NewProcessesByName([string[]]$Names, [hashtable]$BaselineIdMap) {
+    if ($null -eq $Names -or $Names.Count -eq 0) {
+        return
+    }
+    if ($null -eq $BaselineIdMap) {
+        $BaselineIdMap = @{}
+    }
+
+    $procs = Get-Process -Name $Names -ErrorAction SilentlyContinue
+    foreach ($p in $procs) {
+        $key = [string]$p.Id
+        if (-not $BaselineIdMap.ContainsKey($key)) {
+            try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
+        }
+    }
+}
+
+function Invoke-GuardedProcess(
+    [string]$FilePath,
+    [string[]]$ArgumentList,
+    [string]$StageName,
+    [string]$Label,
+    [switch]$UseRawArgumentList
+) {
+    $timeoutMinutes = Get-StageTimeoutMinutes $StageName
+    $reportsDir = Join-Path $ResolvedRunDir "reports"
+    New-Item -ItemType Directory -Path $reportsDir -Force | Out-Null
+
+    $safeLabel = ($Label -replace "[^a-zA-Z0-9_-]", "_")
+    $stdoutPath = Join-Path $reportsDir ("guard_{0}.stdout.log" -f $safeLabel)
+    $stderrPath = Join-Path $reportsDir ("guard_{0}.stderr.log" -f $safeLabel)
+    Remove-Item -LiteralPath $stdoutPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+
+    $cleanupNames = @()
+    if ($StageName -in @("preflight", "houdini", "convert")) {
+        $cleanupNames = @("hython", "hbatch")
+    }
+    $baselineIds = Get-ProcessIdMapByName -Names $cleanupNames
+
+    if ($UseRawArgumentList) {
+        $proc = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+    }
+    else {
+        $quotedArgs = Convert-ToQuotedArgs -InputArgs $ArgumentList
+        $proc = Start-Process -FilePath $FilePath -ArgumentList $quotedArgs -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+    }
+    if ($null -eq $proc) {
+        throw "Failed to start process: $FilePath $($ArgumentList -join ' ')"
+    }
+
+    $startAt = Get-Date
+    $lastActivityAt = $startAt
+    $lastCpu = [double]$proc.CPU
+    $lastStdLen = 0L
+    $lastErrLen = 0L
+
+    while (-not $proc.HasExited) {
+        Start-Sleep -Seconds 10
+        $proc.Refresh()
+
+        $cpuNow = [double]$proc.CPU
+        if ($cpuNow -gt ($lastCpu + 0.01)) {
+            $lastActivityAt = Get-Date
+            $lastCpu = $cpuNow
+        }
+
+        $stdLen = if (Test-Path $stdoutPath) { (Get-Item -LiteralPath $stdoutPath).Length } else { 0L }
+        $errLen = if (Test-Path $stderrPath) { (Get-Item -LiteralPath $stderrPath).Length } else { 0L }
+        if ($stdLen -ne $lastStdLen -or $errLen -ne $lastErrLen) {
+            $lastActivityAt = Get-Date
+            $lastStdLen = $stdLen
+            $lastErrLen = $errLen
+        }
+
+        $repeatLine = Get-RepeatedErrorLine -Path $stderrPath -Threshold $RepeatedErrorThreshold
+        if (-not [string]::IsNullOrWhiteSpace($repeatLine)) {
+            try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+            Stop-NewProcessesByName -Names $cleanupNames -BaselineIdMap $baselineIds
+            throw "Repeated error detected in stage '$StageName': $repeatLine"
+        }
+
+        $elapsedMinutes = ((Get-Date) - $startAt).TotalMinutes
+        if ($elapsedMinutes -gt $timeoutMinutes) {
+            try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+            Stop-NewProcessesByName -Names $cleanupNames -BaselineIdMap $baselineIds
+            $errTail = Get-LogTail -Path $stderrPath -TailLines 60
+            throw "Stage '$StageName' timeout (${timeoutMinutes}m). stderr tail:`n$errTail"
+        }
+
+        $idleMinutes = ((Get-Date) - $lastActivityAt).TotalMinutes
+        if ($idleMinutes -gt $NoActivityMinutes) {
+            try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+            Stop-NewProcessesByName -Names $cleanupNames -BaselineIdMap $baselineIds
+            $stdTail = Get-LogTail -Path $stdoutPath -TailLines 40
+            $errTail = Get-LogTail -Path $stderrPath -TailLines 40
+            throw "No activity detected for ${NoActivityMinutes}m in stage '$StageName'. stdout tail:`n$stdTail`n----`nstderr tail:`n$errTail"
+        }
+    }
+
+    $exitCode = $proc.ExitCode
+    if ($exitCode -ne 0) {
+        Stop-NewProcessesByName -Names $cleanupNames -BaselineIdMap $baselineIds
+    }
+    return @{
+        exit_code = $exitCode
+        stdout_path = $stdoutPath
+        stderr_path = $stderrPath
+        stdout_tail = Get-LogTail -Path $stdoutPath -TailLines 40
+        stderr_tail = Get-LogTail -Path $stderrPath -TailLines 40
+    }
+}
+
+function Invoke-PythonScript(
+    [string]$Interpreter,
+    [string]$ScriptPath,
+    [string[]]$ExtraArgs = @(),
+    [string]$StageName = ""
+) {
+    $argsList = @(
+        $ScriptPath,
+        "--config", $ResolvedConfigPath,
+        "--profile", $Profile,
+        "--run-dir", $ResolvedRunDir
+    ) + $ExtraArgs
+
+    if ([string]::IsNullOrWhiteSpace($StageName)) {
+        $StageName = [System.IO.Path]::GetFileNameWithoutExtension($ScriptPath)
+    }
+    $label = [System.IO.Path]::GetFileNameWithoutExtension($ScriptPath)
+    $result = Invoke-GuardedProcess -FilePath $Interpreter -ArgumentList $argsList -StageName $StageName -Label $label
+    if ([int]$result.exit_code -ne 0) {
+        throw "Script failed: $ScriptPath (exit code $($result.exit_code))`nstderr tail:`n$($result.stderr_tail)"
+    }
+
+    $scriptFile = [System.IO.Path]::GetFileName($ScriptPath)
+    $reportStage = switch ($scriptFile) {
+        "parse_hip.py" { "preflight" }
+        "houdini_cook.py" { "houdini" }
+        "houdini_export_abc.py" { "convert" }
+        "build_report.py" { "report" }
+        default { "" }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($reportStage)) {
+        $reportPath = Join-Path (Join-Path $ResolvedRunDir "reports") ("{0}_report.json" -f $reportStage)
+        if (Test-Path $reportPath) {
+            try {
+                $reportObj = (Get-Content -Raw $reportPath) | ConvertFrom-Json
+                if ($null -eq $reportObj -or [string]$reportObj.status -ne "success") {
+                    throw "Stage report indicates failure: $reportPath"
+                }
+                return
+            }
+            catch {
+                throw "Failed to validate stage report for ${scriptFile}: $($_.Exception.Message)"
+            }
+        }
+    }
+
+    if ([string]$result.stderr_tail -match "(?i)(can't open file|traceback|fatal|exception)") {
+        throw "Detected fatal stderr while running ${scriptFile}:`n$($result.stderr_tail)"
+    }
+}
+
+function Invoke-UnrealPythonScript([string]$ScriptPath) {
+    $oldConfig = $env:HOU2UE_CONFIG
+    $oldProfile = $env:HOU2UE_PROFILE
+    $oldRunDir = $env:HOU2UE_RUN_DIR
+    $oldOutRoot = $env:HOU2UE_OUT_ROOT
+
+    try {
+        $env:HOU2UE_CONFIG = $ResolvedConfigPath
+        $env:HOU2UE_PROFILE = $Profile
+        $env:HOU2UE_RUN_DIR = $ResolvedRunDir
+        $env:HOU2UE_OUT_ROOT = $ResolvedOutRoot
+
+        $scriptArgPath = $ScriptPath -replace "\\", "/"
+        $executeArg = "-ExecutePythonScript=`"$scriptArgPath`""
+        $argList = @(
+            "`"$ResolvedUProjectPath`"",
+            $executeArg,
+            "-unattended",
+            "-nop4",
+            "-nosplash",
+            "-NoSound",
+            "-stdout",
+            "-FullStdOutLogOutput"
+        )
+
+        $scriptFile = [System.IO.Path]::GetFileName($ScriptPath)
+        $reportStage = switch ($scriptFile) {
+            "ue_import.py" { "ue_import" }
+            "ue_setup_assets.py" { "ue_setup" }
+            "ue_train.py" { "train" }
+            "ue_infer.py" { "infer" }
+            default { "ue_stage" }
+        }
+
+        $proc = Start-Process -FilePath $ResolvedUEEditorExe -ArgumentList $argList -Wait -PassThru
+        if ($null -eq $proc -or $proc.ExitCode -ne 0) {
+            $code = if ($null -eq $proc) { -1 } else { [int]$proc.ExitCode }
+            if (-not [string]::IsNullOrWhiteSpace($reportStage)) {
+                $reportPath = Join-Path (Join-Path $ResolvedRunDir "reports") ("{0}_report.json" -f $reportStage)
+                if (Test-Path $reportPath) {
+                    try {
+                        $reportObj = (Get-Content -Raw $reportPath) | ConvertFrom-Json
+                        if ($null -ne $reportObj -and [string]$reportObj.status -eq "success") {
+                            Write-Warning "UnrealEditor returned exit code $code for $scriptFile, but report status is success. Continuing."
+                            return
+                        }
+                    }
+                    catch {
+                        # Keep throwing below if report cannot be parsed.
+                    }
+                }
+            }
+
+            throw "Unreal Python stage failed: $ScriptPath (exit code $code)"
+        }
+    }
+    finally {
+        $env:HOU2UE_CONFIG = $oldConfig
+        $env:HOU2UE_PROFILE = $oldProfile
+        $env:HOU2UE_RUN_DIR = $oldRunDir
+        $env:HOU2UE_OUT_ROOT = $oldOutRoot
+    }
+}
+
+$ScriptRoot = $PSScriptRoot
+$ProjectRoot = Resolve-Path (Join-Path $ScriptRoot "..\..")
+$ResolvedConfigPath = Resolve-AbsolutePath $Config $ProjectRoot
+$ResolvedOutRoot = Resolve-AbsolutePath $OutRoot $ProjectRoot
+
+if (-not (Test-Path $ResolvedConfigPath)) {
+    throw "Config not found: $ResolvedConfigPath"
+}
+
+New-Item -ItemType Directory -Path $ResolvedOutRoot -Force | Out-Null
+
+$configText = Get-Content -Raw $ResolvedConfigPath
+try {
+    $ConfigObj = $configText | ConvertFrom-Json
+}
+catch {
+    throw "Config must be JSON-compatible YAML. Failed to parse with ConvertFrom-Json: $ResolvedConfigPath"
+}
+
+$ResolvedPythonExe = [string]$ConfigObj.paths.python_exe
+$ResolvedHythonExe = [string]$ConfigObj.paths.houdini.hython_exe
+$ResolvedUEEditorExe = [string]$ConfigObj.paths.ue_editor_exe
+$ResolvedUProjectPath = Resolve-AbsolutePath ([string]$ConfigObj.paths.uproject) $ProjectRoot
+$ResolvedHipPath = Resolve-AbsolutePath ([string]$ConfigObj.paths.hip_file) $ProjectRoot
+
+if (-not (Test-Path $ResolvedUProjectPath)) {
+    throw "uproject not found: $ResolvedUProjectPath"
+}
+if (-not (Test-Path $ResolvedHipPath)) {
+    throw "HIP file not found: $ResolvedHipPath"
+}
+
+$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$LatestProfileDir = Join-Path (Join-Path $ResolvedOutRoot "latest") $Profile
+
+if (-not [string]::IsNullOrWhiteSpace($RunDir)) {
+    $ResolvedRunDir = Resolve-AbsolutePath $RunDir $ProjectRoot
+}
+elseif ($Stage -in @("preflight", "houdini", "full")) {
+    $ResolvedRunDir = Join-Path (Join-Path $ResolvedOutRoot "runs") ("{0}_{1}" -f $timestamp, $Profile)
+}
+elseif (Test-Path $LatestProfileDir) {
+    $ResolvedRunDir = [System.IO.Path]::GetFullPath($LatestProfileDir)
+}
+else {
+    throw "No existing run directory for stage '$Stage'. Run preflight/houdini/full first, or pass -RunDir explicitly."
+}
+
+New-Item -ItemType Directory -Path $ResolvedRunDir -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $ResolvedRunDir "reports") -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $ResolvedRunDir "manifests") -Force | Out-Null
+
+Copy-Item -LiteralPath $ResolvedConfigPath -Destination (Join-Path $ResolvedRunDir "pipeline_config.input.yaml") -Force
+
+$RunInfo = @{
+    stage = $Stage
+    profile = $Profile
+    config = $ResolvedConfigPath
+    out_root = $ResolvedOutRoot
+    run_dir = $ResolvedRunDir
+    created_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+} | ConvertTo-Json -Depth 10
+$RunInfo | Set-Content -Encoding UTF8 (Join-Path $ResolvedRunDir "run_info.json")
+
+$ScriptsDir = Join-Path $ScriptRoot "scripts"
+$parseHipScript = Join-Path $ScriptsDir "parse_hip.py"
+$houdiniCookScript = Join-Path $ScriptsDir "houdini_cook.py"
+$houdiniExportScript = Join-Path $ScriptsDir "houdini_export_abc.py"
+$ueImportScript = Join-Path $ScriptsDir "ue_import.py"
+$ueSetupScript = Join-Path $ScriptsDir "ue_setup_assets.py"
+$ueTrainScript = Join-Path $ScriptsDir "ue_train.py"
+$ueDemoCaptureScript = Join-Path $ScriptsDir "ue_demo_capture.py"
+$ueInferScript = Join-Path $ScriptsDir "ue_infer.py"
+$buildReportScript = Join-Path $ScriptsDir "build_report.py"
+
+function Assert-Preflight {
+    Assert-CommandOrPath $ResolvedHythonExe "Houdini hython"
+    if (-not (Test-Path $ResolvedHipPath)) {
+        throw "HIP file not found: $ResolvedHipPath"
+    }
+}
+
+function Assert-HoudiniForConvert {
+    Assert-CommandOrPath $ResolvedHythonExe "Houdini hython"
+}
+
+function Assert-UE {
+    Assert-CommandOrPath $ResolvedUEEditorExe "UnrealEditor"
+}
+
+function Assert-Python {
+    Assert-CommandOrPath $ResolvedPythonExe "Python"
+}
+
+function Run-Stage([string]$StageName) {
+    switch ($StageName) {
+        "preflight" {
+            Assert-Preflight
+            Invoke-PythonScript -Interpreter $ResolvedHythonExe -ScriptPath $parseHipScript -StageName "preflight"
+        }
+        "houdini" {
+            Assert-Preflight
+            Invoke-PythonScript -Interpreter $ResolvedHythonExe -ScriptPath $houdiniCookScript -StageName "houdini"
+        }
+        "convert" {
+            Assert-Python
+            Assert-HoudiniForConvert
+            Invoke-PythonScript -Interpreter $ResolvedPythonExe -ScriptPath $houdiniExportScript -StageName "convert"
+        }
+        "ue_import" {
+            Assert-UE
+            Invoke-UnrealPythonScript -ScriptPath $ueImportScript
+        }
+        "ue_setup" {
+            Assert-UE
+            Invoke-UnrealPythonScript -ScriptPath $ueSetupScript
+        }
+        "train" {
+            Assert-UE
+            Invoke-UnrealPythonScript -ScriptPath $ueTrainScript
+        }
+        "infer" {
+            Assert-UE
+            Assert-Python
+            Invoke-PythonScript -Interpreter $ResolvedPythonExe -ScriptPath $ueDemoCaptureScript -StageName "infer"
+            Invoke-UnrealPythonScript -ScriptPath $ueInferScript
+        }
+        "report" {
+            Assert-Python
+            Invoke-PythonScript -Interpreter $ResolvedPythonExe -ScriptPath $buildReportScript -StageName "report" -ExtraArgs @("--out-root", $ResolvedOutRoot)
+        }
+        default {
+            throw "Unknown stage: $StageName"
+        }
+    }
+}
+
+if ($Stage -eq "full") {
+    $ordered = @("preflight", "houdini", "convert", "ue_import", "ue_setup", "train", "infer", "report")
+    foreach ($s in $ordered) {
+        Write-Host "[hou2ue] Running stage: $s"
+        Run-Stage $s
+    }
+}
+else {
+    Write-Host "[hou2ue] Running stage: $Stage"
+    Run-Stage $Stage
+}
+
+Write-Host "[hou2ue] Done. RunDir=$ResolvedRunDir"

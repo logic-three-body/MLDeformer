@@ -10,6 +10,6 @@ public class MLDeformerSampleEditorTarget : TargetRules
 		Type = TargetType.Editor;
 		DefaultBuildSettings = BuildSettingsVersion.Latest;
 
-		ExtraModuleNames.AddRange( new string[] { "MLDeformerSample" } );
+		ExtraModuleNames.AddRange( new string[] { "MLDeformerSample", "MLDeformerSampleEditorTools" } );
 	}
 }

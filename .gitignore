@@ -66,3 +66,10 @@ Content/Characters/Emil/GeomCache/MLD_Train/GC_upperBodyFlesh_hero64.uasset
 prototype/state/
 prototype/.ipynb_checkpoints/
 
+# Houdini->UE pipeline runtime artifacts
+pipeline/hou2ue/workspace/
+
+# Local reference dump / oversized binaries
+Refference/
+Content/Characters/Emil/GeomCache/
+
