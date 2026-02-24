@@ -1,5 +1,5 @@
 ﻿param(
-    [ValidateSet("preflight", "houdini", "convert", "ue_import", "ue_setup", "train", "infer", "report", "full")]
+    [ValidateSet("baseline_sync", "preflight", "houdini", "convert", "ue_import", "ue_setup", "train", "infer", "gt_reference_capture", "gt_source_capture", "gt_compare", "report", "full")]
     [string]$Stage = "full",
 
     [ValidateSet("smoke", "full")]
@@ -47,6 +47,7 @@ function Assert-CommandOrPath([string]$ExeOrCmd, [string]$DisplayName) {
 
 function Get-StageTimeoutMinutes([string]$StageName) {
     switch ($StageName) {
+        "baseline_sync" { return 360 }
         "preflight" { return 30 }
         "houdini" { return $HoudiniMaxMinutes }
         "convert" { return 90 }
@@ -54,6 +55,9 @@ function Get-StageTimeoutMinutes([string]$StageName) {
         "ue_setup" { return 60 }
         "train" { return 240 }
         "infer" { return 240 }
+        "gt_reference_capture" { return 240 }
+        "gt_source_capture" { return 240 }
+        "gt_compare" { return 60 }
         "report" { return 30 }
         default { return 120 }
     }
@@ -273,12 +277,14 @@ function Invoke-PythonScript(
     if ([int]$result.exit_code -ne 0) {
         throw "Script failed: $ScriptPath (exit code $($result.exit_code))`nstderr tail:`n$($result.stderr_tail)"
     }
-
     $scriptFile = [System.IO.Path]::GetFileName($ScriptPath)
     $reportStage = switch ($scriptFile) {
+        "sync_reference_baseline.py" { "baseline_sync" }
         "parse_hip.py" { "preflight" }
         "houdini_cook.py" { "houdini" }
         "houdini_export_abc.py" { "convert" }
+        "ue_capture_mainseq.py" { $StageName }
+        "compare_groundtruth.py" { "gt_compare" }
         "build_report.py" { "report" }
         default { "" }
     }
@@ -359,6 +365,23 @@ function Invoke-UnrealPythonScript([string]$ScriptPath) {
 
             throw "Unreal Python stage failed: $ScriptPath (exit code $code)"
         }
+
+        if (-not [string]::IsNullOrWhiteSpace($reportStage)) {
+            $reportPath = Join-Path (Join-Path $ResolvedRunDir "reports") ("{0}_report.json" -f $reportStage)
+            if (-not (Test-Path $reportPath)) {
+                throw "Missing stage report after Unreal Python stage: $reportPath"
+            }
+
+            try {
+                $reportObj = (Get-Content -Raw $reportPath) | ConvertFrom-Json
+                if ($null -eq $reportObj -or [string]$reportObj.status -ne "success") {
+                    throw "Stage report indicates failure: $reportPath"
+                }
+            }
+            catch {
+                throw "Failed to validate Unreal stage report for ${scriptFile}: $($_.Exception.Message)"
+            }
+        }
     }
     finally {
         $env:HOU2UE_CONFIG = $oldConfig
@@ -406,7 +429,7 @@ $LatestProfileDir = Join-Path (Join-Path $ResolvedOutRoot "latest") $Profile
 if (-not [string]::IsNullOrWhiteSpace($RunDir)) {
     $ResolvedRunDir = Resolve-AbsolutePath $RunDir $ProjectRoot
 }
-elseif ($Stage -in @("preflight", "houdini", "full")) {
+elseif ($Stage -in @("baseline_sync", "preflight", "houdini", "full")) {
     $ResolvedRunDir = Join-Path (Join-Path $ResolvedOutRoot "runs") ("{0}_{1}" -f $timestamp, $Profile)
 }
 elseif (Test-Path $LatestProfileDir) {
@@ -441,6 +464,9 @@ $ueSetupScript = Join-Path $ScriptsDir "ue_setup_assets.py"
 $ueTrainScript = Join-Path $ScriptsDir "ue_train.py"
 $ueDemoCaptureScript = Join-Path $ScriptsDir "ue_demo_capture.py"
 $ueInferScript = Join-Path $ScriptsDir "ue_infer.py"
+$baselineSyncScript = Join-Path $ScriptsDir "sync_reference_baseline.py"
+$ueCaptureMainSeqScript = Join-Path $ScriptsDir "ue_capture_mainseq.py"
+$gtCompareScript = Join-Path $ScriptsDir "compare_groundtruth.py"
 $buildReportScript = Join-Path $ScriptsDir "build_report.py"
 
 function Assert-Preflight {
@@ -464,6 +490,10 @@ function Assert-Python {
 
 function Run-Stage([string]$StageName) {
     switch ($StageName) {
+        "baseline_sync" {
+            Assert-Python
+            Invoke-PythonScript -Interpreter $ResolvedPythonExe -ScriptPath $baselineSyncScript -StageName "baseline_sync"
+        }
         "preflight" {
             Assert-Preflight
             Invoke-PythonScript -Interpreter $ResolvedHythonExe -ScriptPath $parseHipScript -StageName "preflight"
@@ -495,6 +525,20 @@ function Run-Stage([string]$StageName) {
             Invoke-PythonScript -Interpreter $ResolvedPythonExe -ScriptPath $ueDemoCaptureScript -StageName "infer"
             Invoke-UnrealPythonScript -ScriptPath $ueInferScript
         }
+        "gt_reference_capture" {
+            Assert-UE
+            Assert-Python
+            Invoke-PythonScript -Interpreter $ResolvedPythonExe -ScriptPath $ueCaptureMainSeqScript -StageName "gt_reference_capture" -ExtraArgs @("--capture-kind", "reference")
+        }
+        "gt_source_capture" {
+            Assert-UE
+            Assert-Python
+            Invoke-PythonScript -Interpreter $ResolvedPythonExe -ScriptPath $ueCaptureMainSeqScript -StageName "gt_source_capture" -ExtraArgs @("--capture-kind", "source")
+        }
+        "gt_compare" {
+            Assert-Python
+            Invoke-PythonScript -Interpreter $ResolvedPythonExe -ScriptPath $gtCompareScript -StageName "gt_compare"
+        }
         "report" {
             Assert-Python
             Invoke-PythonScript -Interpreter $ResolvedPythonExe -ScriptPath $buildReportScript -StageName "report" -ExtraArgs @("--out-root", $ResolvedOutRoot)
@@ -506,7 +550,7 @@ function Run-Stage([string]$StageName) {
 }
 
 if ($Stage -eq "full") {
-    $ordered = @("preflight", "houdini", "convert", "ue_import", "ue_setup", "train", "infer", "report")
+    $ordered = @("baseline_sync", "preflight", "houdini", "convert", "ue_import", "ue_setup", "train", "infer", "gt_reference_capture", "gt_source_capture", "gt_compare", "report")
     foreach ($s in $ordered) {
         Write-Host "[hou2ue] Running stage: $s"
         Run-Stage $s
@@ -518,3 +562,10 @@ else {
 }
 
 Write-Host "[hou2ue] Done. RunDir=$ResolvedRunDir"
+
+
+
+
+
+
+

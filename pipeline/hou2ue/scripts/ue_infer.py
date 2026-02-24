@@ -158,6 +158,10 @@ def main() -> int:
         if not isinstance(demo_cfg, dict):
             raise RuntimeError("ue.infer.demo must be an object when provided")
         demo_enabled = bool(demo_cfg.get("enabled", False))
+        gt_cfg = cfg.get("ue", {}).get("ground_truth", {}) if isinstance(cfg.get("ue"), dict) else {}
+        if not isinstance(gt_cfg, dict):
+            gt_cfg = {}
+        gt_enabled = bool(gt_cfg.get("enabled", False))
 
         map_loaded = _load_map(map_path)
         command_results = _execute_console_commands(stat_commands)
@@ -184,6 +188,10 @@ def main() -> int:
         demo_jobs_summary: Dict[str, Any] = {"total": 0, "success": 0, "failed": 0}
         demo_total_frames = 0
         demo_sample_frames: List[str] = []
+        gt_compare_report_path = run_dir / "reports" / "gt_compare_report.json"
+        gt_compare_report: Dict[str, Any] = {}
+        gt_compare_status = "disabled"
+        gt_compare_metrics: Dict[str, Any] = {}
 
         if not map_loaded:
             errors.append({"message": f"Failed to load map: {map_path}"})
@@ -230,6 +238,18 @@ def main() -> int:
                         }
                     )
 
+        if gt_enabled:
+            gt_compare_report = _load_demo_report(gt_compare_report_path)
+            if gt_compare_report:
+                gt_compare_status = str(gt_compare_report.get("status", "unknown"))
+                outputs = gt_compare_report.get("outputs", {})
+                if isinstance(outputs, dict):
+                    metrics = outputs.get("metrics", {})
+                    if isinstance(metrics, dict):
+                        gt_compare_metrics = metrics
+            else:
+                gt_compare_status = "pending"
+
         status = "success" if not errors else "failed"
         finalize_report(
             report,
@@ -249,6 +269,10 @@ def main() -> int:
                 "demo_jobs_summary": demo_jobs_summary,
                 "demo_total_frames": demo_total_frames,
                 "demo_sample_frames": demo_sample_frames,
+                "ground_truth_compare_enabled": gt_enabled,
+                "ground_truth_compare_report": str(gt_compare_report_path.resolve()),
+                "ground_truth_compare_status": gt_compare_status,
+                "ground_truth_compare_metrics": gt_compare_metrics,
             },
             errors=errors,
         )

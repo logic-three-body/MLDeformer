@@ -30,6 +30,25 @@ from ue_common import (
 )
 
 
+def _apply_reference_override(root_cfg: Dict[str, Any], key: str, item_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    ref_cfg = root_cfg.get("reference_baseline", {})
+    if not isinstance(ref_cfg, dict) or not bool(ref_cfg.get("enabled", False)):
+        return item_cfg
+
+    overrides = ref_cfg.get("deformer_assets_override", {})
+    if not isinstance(overrides, dict):
+        return item_cfg
+
+    per_asset = overrides.get(key)
+    if not isinstance(per_asset, dict):
+        return item_cfg
+
+    merged = dict(item_cfg)
+    for override_key, override_value in per_asset.items():
+        merged[override_key] = override_value
+    return merged
+
+
 def _setup_request_class():
     for name in ("MldSetupRequest", "FMldSetupRequest"):
         cls = getattr(unreal, name, None)
@@ -154,7 +173,8 @@ def _build_setup_request(
     return req, resolved_inputs
 
 
-def _configure_single_asset(name: str, cfg: Dict[str, Any], profile: str, run_dir: Path) -> Dict[str, Any]:
+def _configure_single_asset(name: str, cfg: Dict[str, Any], profile: str, run_dir: Path, root_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    cfg = _apply_reference_override(root_cfg, name, cfg)
     asset_path = str(require_nested(cfg, ("asset_path",)))
     model_type = str(require_nested(cfg, ("model_type",)))
     _, lifecycle = _ensure_asset(asset_path)
@@ -218,7 +238,7 @@ def main() -> int:
                 continue
 
             try:
-                res = _configure_single_asset(key, item_cfg, profile, run_dir)
+                res = _configure_single_asset(key, item_cfg, profile, run_dir, cfg)
                 results.append(res)
                 if res["status"] != "success":
                     errors.append({"message": f"Asset setup failed: {key}", "detail": res.get("message", "")})

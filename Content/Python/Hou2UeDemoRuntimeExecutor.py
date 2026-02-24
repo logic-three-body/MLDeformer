@@ -39,6 +39,17 @@ def _load_asset_checked(asset_path):
     return asset
 
 
+def _resolve_sequence_playback_range(level_sequence):
+    try:
+        start = int(unreal.MovieSceneSequenceExtensions.get_playback_start(level_sequence))
+        end = int(unreal.MovieSceneSequenceExtensions.get_playback_end(level_sequence))
+        if end < start:
+            end = start
+        return start, end
+    except Exception:
+        return 0, 119
+
+
 def _set_frame_prop(output_settings, prop_name, frame_value):
     if _set_prop_safe(output_settings, prop_name, int(frame_value)):
         return
@@ -72,6 +83,7 @@ def _iter_sections_from_track(track):
 
 def _swap_sequence_animation(level_sequence, anim_sequence):
     replaced_sections = 0
+    originals = []
     bindings = []
     try:
         bindings = list(level_sequence.get_bindings())
@@ -101,14 +113,33 @@ def _swap_sequence_animation(level_sequence, anim_sequence):
                 params = _get_prop_safe(section, "params", None)
                 if params is None:
                     continue
+                original_anim = _get_prop_safe(params, "animation", None)
                 if not _set_prop_safe(params, "animation", anim_sequence):
                     continue
                 _set_prop_safe(section, "params", params)
                 replaced_sections += 1
+                originals.append((section, original_anim))
 
     if replaced_sections <= 0:
         raise RuntimeError("No MovieSceneSkeletalAnimationSection found in target LevelSequence")
-    return replaced_sections
+    return replaced_sections, originals
+
+
+def _restore_sequence_animation(originals):
+    restored = 0
+    for item in originals or []:
+        try:
+            section, original_anim = item
+        except Exception:
+            continue
+        params = _get_prop_safe(section, "params", None)
+        if params is None:
+            continue
+        if not _set_prop_safe(params, "animation", original_anim):
+            continue
+        _set_prop_safe(section, "params", params)
+        restored += 1
+    return restored
 
 
 def _collect_frames(output_dir):
@@ -134,6 +165,8 @@ class Hou2UeDemoRuntimeExecutor(unreal.MoviePipelinePythonHostExecutor):
     frame_end = unreal.uproperty(int)
     output_res_x = unreal.uproperty(int)
     output_res_y = unreal.uproperty(int)
+    warmup_frames = unreal.uproperty(int)
+    restored_sections = unreal.uproperty(int)
 
     def _post_init(self):
         self.active_movie_pipeline = None
@@ -150,6 +183,15 @@ class Hou2UeDemoRuntimeExecutor(unreal.MoviePipelinePythonHostExecutor):
         self.frame_end = 119
         self.output_res_x = 1280
         self.output_res_y = 720
+        self.warmup_frames = 0
+        self.restored_sections = 0
+        self._animation_originals = []
+
+    def _restore_swapped_animation_sections(self):
+        restored = _restore_sequence_animation(getattr(self, "_animation_originals", []))
+        self.restored_sections = int(restored)
+        self._animation_originals = []
+        return restored
 
     def _write_report(self, status, success, message, output_data):
         if not self.demo_report_json:
@@ -181,6 +223,7 @@ class Hou2UeDemoRuntimeExecutor(unreal.MoviePipelinePythonHostExecutor):
                 "frame_start": int(self.frame_start),
                 "frame_end": int(self.frame_end),
                 "output_resolution": [int(self.output_res_x), int(self.output_res_y)],
+                "warmup_frames": int(self.warmup_frames),
             },
             "outputs": output_data or {},
             "errors": [] if success else [{"message": str(message)}],
@@ -201,25 +244,35 @@ class Hou2UeDemoRuntimeExecutor(unreal.MoviePipelinePythonHostExecutor):
         try:
             (_, _, cmd_params) = unreal.SystemLibrary.parse_command_line(unreal.SystemLibrary.get_command_line())
             self.demo_sequence = str(_param_lookup(cmd_params, "DemoSequence", required=True))
-            self.demo_anim = str(_param_lookup(cmd_params, "DemoAnim", required=True))
+            self.demo_anim = str(_param_lookup(cmd_params, "DemoAnim", required=False, default=""))
             self.demo_output_dir = str(_param_lookup(cmd_params, "DemoOutputDir", required=True))
             self.demo_report_json = str(_param_lookup(cmd_params, "DemoReportJson", required=True))
             self.demo_map = str(_param_lookup(cmd_params, "DemoMap", required=False, default=""))
             self.output_res_x = int(_param_lookup(cmd_params, "DemoResX", required=False, default="1280"))
             self.output_res_y = int(_param_lookup(cmd_params, "DemoResY", required=False, default="720"))
-            self.frame_start = int(_param_lookup(cmd_params, "DemoStartFrame", required=False, default="0"))
-            self.frame_end = int(_param_lookup(cmd_params, "DemoEndFrame", required=False, default="119"))
+            frame_start_raw = str(_param_lookup(cmd_params, "DemoStartFrame", required=False, default="")).strip()
+            frame_end_raw = str(_param_lookup(cmd_params, "DemoEndFrame", required=False, default="")).strip()
             zero_pad = int(_param_lookup(cmd_params, "DemoZeroPad", required=False, default="4"))
-
-            if self.frame_end < self.frame_start:
-                raise RuntimeError("DemoEndFrame must be >= DemoStartFrame")
+            self.warmup_frames = int(_param_lookup(cmd_params, "DemoWarmupFrames", required=False, default="0"))
 
             output_dir = Path(self.demo_output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
 
             sequence_asset = _load_asset_checked(self.demo_sequence)
-            anim_asset = _load_asset_checked(self.demo_anim)
-            self.replaced_sections = _swap_sequence_animation(sequence_asset, anim_asset)
+            auto_start, auto_end = _resolve_sequence_playback_range(sequence_asset)
+            self.frame_start = int(frame_start_raw) if frame_start_raw else int(auto_start)
+            self.frame_end = int(frame_end_raw) if frame_end_raw else int(auto_end)
+            if self.frame_end < self.frame_start:
+                raise RuntimeError("DemoEndFrame must be >= DemoStartFrame")
+
+            self.replaced_sections = 0
+            self.restored_sections = 0
+            self._animation_originals = []
+            if self.demo_anim:
+                anim_asset = _load_asset_checked(self.demo_anim)
+                replaced, originals = _swap_sequence_animation(sequence_asset, anim_asset)
+                self.replaced_sections = int(replaced)
+                self._animation_originals = originals
 
             self.pipeline_queue = unreal.new_object(unreal.MoviePipelineQueue, outer=self)
             job = self.pipeline_queue.allocate_new_job(unreal.MoviePipelineExecutorJob)
@@ -236,6 +289,11 @@ class Hou2UeDemoRuntimeExecutor(unreal.MoviePipelinePythonHostExecutor):
             _set_frame_prop(output_settings, "custom_start_frame", self.frame_start)
             _set_frame_prop(output_settings, "custom_end_frame", self.frame_end)
             _set_prop_safe(output_settings, "zero_pad_frame_numbers", zero_pad)
+
+            if self.warmup_frames > 0:
+                aa = config.find_or_add_setting_by_class(unreal.MoviePipelineAntiAliasingSetting)
+                _set_prop_safe(aa, "engine_warm_up_count", int(self.warmup_frames))
+                _set_prop_safe(aa, "render_warm_up_count", int(self.warmup_frames))
 
             config.find_or_add_setting_by_class(unreal.MoviePipelineDeferredPassBase)
             config.find_or_add_setting_by_class(unreal.MoviePipelineImageSequenceOutput_PNG)
@@ -255,6 +313,7 @@ class Hou2UeDemoRuntimeExecutor(unreal.MoviePipelinePythonHostExecutor):
                 f"[hou2ue] Demo capture started: sequence={self.demo_sequence}, anim={self.demo_anim}, output={self.demo_output_dir}"
             )
         except Exception as exc:
+            self._restore_swapped_animation_sections()
             unreal.log_error(f"[hou2ue] Demo capture execute_delayed failed: {exc}")
             self._write_report(
                 status="failed",
@@ -292,6 +351,7 @@ class Hou2UeDemoRuntimeExecutor(unreal.MoviePipelinePythonHostExecutor):
     @unreal.ufunction(ret=None, params=[unreal.MoviePipelineOutputData])
     def on_movie_pipeline_finished(self, results):
         success = bool(getattr(results, "success", False))
+        self._restore_swapped_animation_sections()
         frames = _collect_frames(self.demo_output_dir)
         first_frame = frames[0] if frames else ""
         last_frame = frames[-1] if frames else ""
@@ -306,6 +366,7 @@ class Hou2UeDemoRuntimeExecutor(unreal.MoviePipelinePythonHostExecutor):
                 "last_frame": last_frame,
                 "output_dir": str(Path(self.demo_output_dir).resolve()),
                 "replaced_animation_sections": int(self.replaced_sections),
+                "restored_animation_sections": int(self.restored_sections),
             },
         )
 

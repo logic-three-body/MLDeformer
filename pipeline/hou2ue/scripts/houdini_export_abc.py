@@ -61,6 +61,184 @@ def _find_hython(cfg: Dict[str, Any]) -> Path:
     return hython
 
 
+def _coord_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    houdini_cfg = cfg.get("houdini", {})
+    if not isinstance(houdini_cfg, dict):
+        houdini_cfg = {}
+    coord_cfg = houdini_cfg.get("coord_system", {})
+    if not isinstance(coord_cfg, dict):
+        coord_cfg = {}
+
+    matrix = coord_cfg.get("matrix_3x3", [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+    if (
+        not isinstance(matrix, list)
+        or len(matrix) != 3
+        or any(not isinstance(row, list) or len(row) != 3 for row in matrix)
+    ):
+        raise RuntimeError("houdini.coord_system.matrix_3x3 must be a 3x3 array")
+
+    translation = coord_cfg.get("translation_offset", [0.0, 0.0, 0.0])
+    if not isinstance(translation, list) or len(translation) != 3:
+        raise RuntimeError("houdini.coord_system.translation_offset must be [x,y,z]")
+
+    validate_cfg = coord_cfg.get("validate", {})
+    if not isinstance(validate_cfg, dict):
+        validate_cfg = {}
+
+    return {
+        "mode": str(coord_cfg.get("mode", "explicit") or "explicit"),
+        "houdini_unit": str(coord_cfg.get("houdini_unit", "m") or "m"),
+        "ue_unit": str(coord_cfg.get("ue_unit", "cm") or "cm"),
+        "scale_factor": float(coord_cfg.get("scale_factor", 100.0)),
+        "matrix_3x3": [[float(v) for v in row] for row in matrix],
+        "translation_offset": [float(v) for v in translation],
+        "validate_enabled": bool(validate_cfg.get("enabled", True)),
+        "validate_tolerance": float(validate_cfg.get("tolerance", 0.15)),
+        "validate_fail_on_mismatch": bool(validate_cfg.get("fail_on_mismatch", True)),
+    }
+
+
+def _parse_coord_payload(stdout_text: str) -> Dict[str, Any]:
+    marker = "__HOU2UE_COORD__"
+    for line in stdout_text.splitlines():
+        if marker not in line:
+            continue
+        payload = line.split(marker, 1)[-1].strip()
+        if not payload:
+            continue
+        try:
+            val = json.loads(payload)
+            if isinstance(val, dict):
+                return val
+        except Exception:
+            continue
+    return {}
+
+
+def _apply_coord_transform_to_abc(
+    hython: Path,
+    input_abc: Path,
+    frame_start: int,
+    frame_end: int,
+    coord_cfg: Dict[str, Any],
+    track_sop_name: str = "",
+) -> Dict[str, Any]:
+    mode = str(coord_cfg.get("mode", "explicit")).strip().lower()
+    if mode != "explicit":
+        return {
+            "applied": False,
+            "mode": mode,
+            "message": "coord transform skipped because mode is not explicit",
+            "input_abc": str(input_abc.resolve()),
+            "output_abc": str(input_abc.resolve()),
+        }
+
+    if frame_end < frame_start:
+        frame_end = frame_start
+
+    matrix = coord_cfg["matrix_3x3"]
+    translation = coord_cfg["translation_offset"]
+    scale = float(coord_cfg["scale_factor"])
+
+    temp_output = input_abc.with_name(f"{input_abc.stem}.coordtmp{input_abc.suffix}")
+    script = "\n".join(
+        [
+            "import json",
+            "import hou",
+            f"input_abc = {json.dumps(input_abc.as_posix())}",
+            f"output_abc = {json.dumps(temp_output.as_posix())}",
+            f"frame_start = {int(frame_start)}",
+            f"frame_end = {int(frame_end)}",
+            f"track_sop_name = {json.dumps(str(track_sop_name or ''))}",
+            f"scale_factor = {float(scale)}",
+            f"matrix_3x3 = {json.dumps(matrix)}",
+            f"translation = {json.dumps(translation)}",
+            "if frame_end < frame_start:",
+            "    frame_end = frame_start",
+            "hou.hipFile.clear(suppress_save_prompt=True)",
+            "obj = hou.node('/obj')",
+            "geo = obj.createNode('geo', 'hou2ue_coord_geo')",
+            "for child in list(geo.children()):",
+            "    child.destroy()",
+            "file_sop = geo.createNode('file', 'in_abc')",
+            "file_sop.parm('file').set(input_abc)",
+            "wrangle = geo.createNode('attribwrangle', 'coord_xform')",
+            "wrangle.setInput(0, file_sop)",
+            "wrangle.parm('class').set(2)",
+            "m = matrix_3x3",
+            "t = translation",
+            "snippet = (",
+            "    f\"matrix3 M = set({m[0][0]}, {m[0][1]}, {m[0][2]}, {m[1][0]}, {m[1][1]}, {m[1][2]}, {m[2][0]}, {m[2][1]}, {m[2][2]});\"",
+            "    f\"vector T = set({t[0]}, {t[1]}, {t[2]});\"",
+            "    f\"@P = (M * @P) * {scale_factor} + T;\"",
+            ")",
+            "wrangle.parm('snippet').set(snippet)",
+            "track_name = track_sop_name if track_sop_name else 'coord_xform'",
+            "track = geo.createNode('null', track_name)",
+            "track.setInput(0, wrangle)",
+            "track.setDisplayFlag(True)",
+            "track.setRenderFlag(True)",
+            "hou.setFrame(frame_start)",
+            "g_in = file_sop.geometry()",
+            "bb_in = g_in.boundingBox()",
+            "g_out = track.geometry()",
+            "bb_out = g_out.boundingBox()",
+            "out = hou.node('/out')",
+            "rop = out.createNode('alembic', 'hou2ue_coord_export')",
+            "rop.parm('use_sop_path').set(1)",
+            "rop.parm('sop_path').set(track.path())",
+            "rop.parm('filename').set(output_abc)",
+            "rop.parm('mkpath').set(1)",
+            "rop.render(frame_range=(frame_start, frame_end, 1), verbose=False)",
+            "payload = {",
+            "    'mode': 'explicit',",
+            "    'frame_start': int(frame_start),",
+            "    'frame_end': int(frame_end),",
+            "    'track_sop_name': str(track_name),",
+            "    'scale_factor': float(scale_factor),",
+            "    'matrix_3x3': matrix_3x3,",
+            "    'translation_offset': [float(v) for v in translation],",
+            "    'bbox_input_min': [float(bb_in.minvec()[0]), float(bb_in.minvec()[1]), float(bb_in.minvec()[2])],",
+            "    'bbox_input_max': [float(bb_in.maxvec()[0]), float(bb_in.maxvec()[1]), float(bb_in.maxvec()[2])],",
+            "    'bbox_output_min': [float(bb_out.minvec()[0]), float(bb_out.minvec()[1]), float(bb_out.minvec()[2])],",
+            "    'bbox_output_max': [float(bb_out.maxvec()[0]), float(bb_out.maxvec()[1]), float(bb_out.maxvec()[2])],",
+            "}",
+            "print('__HOU2UE_COORD__' + json.dumps(payload))",
+        ]
+    )
+
+    result = subprocess.run(
+        [str(hython), "-"],
+        input=script,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            "hython coordinate transform failed. "
+            f"input={input_abc}\nstdout={result.stdout}\nstderr={result.stderr}"
+        )
+
+    if not temp_output.exists():
+        raise RuntimeError(
+            "hython coordinate transform did not produce output file. "
+            f"expected={temp_output}\nstdout={result.stdout}\nstderr={result.stderr}"
+        )
+
+    shutil.move(str(temp_output), str(input_abc))
+    payload = _parse_coord_payload(result.stdout)
+    payload.update(
+        {
+            "applied": True,
+            "input_abc": str(input_abc.resolve()),
+            "output_abc": str(input_abc.resolve()),
+            "stdout_tail": result.stdout[-4000:],
+            "stderr_tail": result.stderr[-4000:],
+        }
+    )
+    return payload
+
+
 def _extract_source_frame(path: Path) -> int:
     # mesh style: Mio_tissue_mesh_580.bgeo.sc
     m_mesh = re.search(r"_mesh_(\d+)", path.name)
@@ -284,6 +462,7 @@ def _export_nnm_geom_caches(
     run_dir: Path,
     export_dir: Path,
     hython: Path,
+    coord_cfg: Dict[str, Any],
 ) -> Dict[str, Any]:
     ue_cfg = require_nested(cfg, ("ue",))
     dynamic_cfg = require_nested(ue_cfg, ("dynamic_assets",))
@@ -332,7 +511,16 @@ def _export_nnm_geom_caches(
             frame_start=frame_start,
             frame_end=frame_end,
         )
+        coord_entry = _apply_coord_transform_to_abc(
+            hython=hython,
+            input_abc=output_abc,
+            frame_start=frame_start,
+            frame_end=frame_end,
+            coord_cfg=coord_cfg,
+            track_sop_name=preferred_geo_obj,
+        )
         exports[key]["destination_asset"] = dst_asset
+        exports[key]["coord_validation"] = coord_entry
 
     return exports
 
@@ -455,12 +643,16 @@ def main() -> int:
 
         stitched_abc = export_dir / f"GC_upperBodyFlesh_{args.profile}.abc"
         hython = _find_hython(cfg)
+        coord_cfg = _coord_config(cfg)
+        coord_entries: Dict[str, Any] = {}
 
         flesh_source_mode = str(flesh_source.get("mode", "pdg_bgeo"))
         export_log: Dict[str, Any] = {}
         pose_rows: List[Tuple[int, int, int]] = []
         source_files_for_report: List[str] = []
         tissue_count_for_report = 0
+        flesh_frame_start = 1
+        flesh_frame_end = 1
 
         if flesh_source_mode == "fbx_anim":
             source_fbx = Path(flesh_source["source_fbx"])
@@ -488,6 +680,8 @@ def main() -> int:
             export_mode = "hython_fbx_anim_to_alembic"
             source_files_for_report = [str(source_fbx.resolve())]
             tissue_count_for_report = frame_count
+            flesh_frame_start = frame_start
+            flesh_frame_end = frame_end
         else:
             tissue_files = _load_selected_tissue_files(run_manifest)
             if not tissue_files:
@@ -524,6 +718,17 @@ def main() -> int:
 
             source_files_for_report = [str(p.resolve()) for p in tissue_files]
             tissue_count_for_report = len(tissue_files)
+            flesh_frame_start = 1
+            flesh_frame_end = max(1, tissue_count_for_report)
+
+        coord_entries["flesh"] = _apply_coord_transform_to_abc(
+            hython=hython,
+            input_abc=stitched_abc,
+            frame_start=flesh_frame_start,
+            frame_end=flesh_frame_end,
+            coord_cfg=coord_cfg,
+            track_sop_name=str(flesh_source.get("track_sop_name", "body_mesh") or "body_mesh"),
+        )
 
         pose_map_csv = export_dir / "pose_frame_map.csv"
         with pose_map_csv.open("w", encoding="utf-8", newline="") as handle:
@@ -545,7 +750,29 @@ def main() -> int:
             run_dir=run_dir,
             export_dir=export_dir,
             hython=hython,
+            coord_cfg=coord_cfg,
         )
+        for key, val in nnm_exports.items():
+            if isinstance(val, dict) and isinstance(val.get("coord_validation"), dict):
+                coord_entries[f"nnm_{key}"] = val["coord_validation"]
+
+        coord_manifest = {
+            "profile": args.profile,
+            "mode": coord_cfg.get("mode", ""),
+            "houdini_unit": coord_cfg.get("houdini_unit", ""),
+            "ue_unit": coord_cfg.get("ue_unit", ""),
+            "scale_factor": coord_cfg.get("scale_factor", 0.0),
+            "matrix_3x3": coord_cfg.get("matrix_3x3", []),
+            "translation_offset": coord_cfg.get("translation_offset", []),
+            "validate": {
+                "enabled": coord_cfg.get("validate_enabled", False),
+                "tolerance": coord_cfg.get("validate_tolerance", 0.0),
+                "fail_on_mismatch": coord_cfg.get("validate_fail_on_mismatch", False),
+            },
+            "entries": coord_entries,
+        }
+        coord_manifest_path = run_dir / "manifests" / "coord_validation_manifest.json"
+        write_json(coord_manifest_path, coord_manifest)
 
         finalize_report(
             report,
@@ -562,6 +789,8 @@ def main() -> int:
                 "source_files": source_files_for_report,
                 "export_log": export_log,
                 "nnm_geom_cache_exports": nnm_exports,
+                "coord_validation_manifest": str(coord_manifest_path.resolve()),
+                "coord_validation_entries": coord_entries,
             },
             errors=[],
         )

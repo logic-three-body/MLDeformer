@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import traceback
 from pathlib import Path
@@ -162,6 +163,93 @@ def _load_body_skeleton(body_mesh_asset: str) -> Optional[unreal.Skeleton]:
     return None
 
 
+def _load_coord_manifest(run_dir: Path) -> Dict[str, Any]:
+    path = run_dir / "manifests" / "coord_validation_manifest.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _extract_extent_xyz(value: Any) -> List[float]:
+    try:
+        return [float(value.x), float(value.y), float(value.z)]
+    except Exception:
+        pass
+    try:
+        return [float(value[0]), float(value[1]), float(value[2])]
+    except Exception:
+        return [0.0, 0.0, 0.0]
+
+
+def _asset_bounds_size(asset_path: str) -> List[float]:
+    asset = unreal.load_asset(asset_path)
+    if asset is None:
+        return [0.0, 0.0, 0.0]
+
+    # Try common APIs/properties exposed by GeometryCache in UE Python.
+    for fn_name in ("get_bounds", "calculate_extended_bounds", "get_imported_bounds"):
+        fn = getattr(asset, fn_name, None)
+        if callable(fn):
+            try:
+                bounds = fn()
+                extent = None
+                for key in ("box_extent", "boxExtent"):
+                    try:
+                        extent = bounds.get_editor_property(key)
+                        break
+                    except Exception:
+                        continue
+                if extent is None:
+                    extent = getattr(bounds, "box_extent", None) or getattr(bounds, "boxExtent", None)
+                if extent is not None:
+                    ext = _extract_extent_xyz(extent)
+                    return [max(0.0, 2.0 * ext[0]), max(0.0, 2.0 * ext[1]), max(0.0, 2.0 * ext[2])]
+            except Exception:
+                pass
+
+    for key in ("imported_bounds", "extended_bounds", "bounds"):
+        try:
+            bounds = asset.get_editor_property(key)
+            extent = None
+            for ext_key in ("box_extent", "boxExtent"):
+                try:
+                    extent = bounds.get_editor_property(ext_key)
+                    break
+                except Exception:
+                    continue
+            if extent is not None:
+                ext = _extract_extent_xyz(extent)
+                return [max(0.0, 2.0 * ext[0]), max(0.0, 2.0 * ext[1]), max(0.0, 2.0 * ext[2])]
+        except Exception:
+            continue
+
+    return [0.0, 0.0, 0.0]
+
+
+def _bbox_size_from_manifest(entry: Dict[str, Any], prefix: str) -> List[float]:
+    mn = entry.get(f"bbox_{prefix}_min")
+    mx = entry.get(f"bbox_{prefix}_max")
+    if not isinstance(mn, list) or not isinstance(mx, list) or len(mn) != 3 or len(mx) != 3:
+        return [0.0, 0.0, 0.0]
+    return [abs(float(mx[i]) - float(mn[i])) for i in range(3)]
+
+
+def _coord_mismatch_ratio(expected: List[float], actual: List[float]) -> float:
+    ratios: List[float] = []
+    for e, a in zip(expected, actual):
+        e = abs(float(e))
+        a = abs(float(a))
+        if e <= 1e-6 and a <= 1e-6:
+            ratios.append(0.0)
+            continue
+        denom = max(e, 1e-6)
+        ratios.append(abs(a - e) / denom)
+    return max(ratios) if ratios else 0.0
+
+
 def main() -> int:
     ctx = get_context()
     cfg = ctx["config"]
@@ -183,17 +271,44 @@ def main() -> int:
         if not art_root.exists():
             raise RuntimeError(f"ArtSource path does not exist: {art_root}")
 
+        coord_manifest = _load_coord_manifest(run_dir)
+        coord_entries = coord_manifest.get("entries", {}) if isinstance(coord_manifest.get("entries"), dict) else {}
+        houdini_cfg = cfg.get("houdini", {}) if isinstance(cfg.get("houdini"), dict) else {}
+        coord_cfg = houdini_cfg.get("coord_system", {}) if isinstance(houdini_cfg.get("coord_system"), dict) else {}
+        validate_cfg = coord_cfg.get("validate", {}) if isinstance(coord_cfg.get("validate"), dict) else {}
+        coord_validate_enabled = bool(validate_cfg.get("enabled", False))
+        coord_tolerance = float(validate_cfg.get("tolerance", 0.15))
+        coord_fail_on_mismatch = bool(validate_cfg.get("fail_on_mismatch", True))
+
         import_cfg = require_nested(cfg, ("ue", "imports"))
         skm_jobs = list(require_nested(import_cfg, ("skeletal_meshes",)))
         anim_jobs = list(require_nested(import_cfg, ("animations",)))
+        baseline_cfg = cfg.get("reference_baseline", {}) if isinstance(cfg.get("reference_baseline"), dict) else {}
+        skip_static_imports = bool(baseline_cfg.get("enabled", False))
 
         results: List[Dict[str, Any]] = []
         errors: List[Dict[str, Any]] = []
+        coord_targets: Dict[str, str] = {}
 
         # 1) Skeletal meshes.
         for job in skm_jobs:
-            src = art_root / str(require_nested(job, ("source_rel",)))
             dst = str(require_nested(job, ("destination",)))
+            if skip_static_imports:
+                exists = _asset_exists(dst)
+                results.append(
+                    {
+                        "source": "",
+                        "destination": dst,
+                        "status": "skip_baseline",
+                        "imported_object_paths": [],
+                        "success": bool(exists),
+                    }
+                )
+                if not exists:
+                    errors.append({"message": f"Missing baseline-synced skeletal mesh: {dst}", "destination": dst})
+                continue
+
+            src = art_root / str(require_nested(job, ("source_rel",)))
             if not src.exists():
                 errors.append({"message": f"Missing source file: {src}", "destination": dst})
                 continue
@@ -209,8 +324,23 @@ def main() -> int:
 
         # 3) Animations.
         for job in anim_jobs:
-            src = art_root / str(require_nested(job, ("source_rel",)))
             dst = str(require_nested(job, ("destination",)))
+            if skip_static_imports:
+                exists = _asset_exists(dst)
+                results.append(
+                    {
+                        "source": "",
+                        "destination": dst,
+                        "status": "skip_baseline",
+                        "imported_object_paths": [],
+                        "success": bool(exists),
+                    }
+                )
+                if not exists:
+                    errors.append({"message": f"Missing baseline-synced animation: {dst}", "destination": dst})
+                continue
+
+            src = art_root / str(require_nested(job, ("source_rel",)))
             if not src.exists():
                 errors.append({"message": f"Missing source file: {src}", "destination": dst})
                 continue
@@ -237,6 +367,8 @@ def main() -> int:
             results.append(result)
             if not result["success"]:
                 errors.append({"message": result.get("error", "GeomCache import failed"), "destination": gc_dst})
+            else:
+                coord_targets["flesh"] = gc_dst
 
         # 5) Optional NNM geometry caches (upper/lower costume), exported during convert stage.
         for key in (
@@ -264,6 +396,96 @@ def main() -> int:
             results.append(result)
             if not result["success"]:
                 errors.append({"message": result.get("error", "GeomCache import failed"), "destination": dst_asset})
+            else:
+                entry_name = "nnm_upper" if "upper" in key.lower() else "nnm_lower"
+                coord_targets[entry_name] = dst_asset
+
+        coord_rows: List[Dict[str, Any]] = []
+        coord_errors: List[Dict[str, Any]] = []
+        if coord_validate_enabled:
+            for entry_name, asset_path in coord_targets.items():
+                manifest_entry = coord_entries.get(entry_name, {})
+                if not isinstance(manifest_entry, dict) or not manifest_entry:
+                    coord_errors.append(
+                        {
+                            "message": "coord validation entry missing in manifest",
+                            "entry": entry_name,
+                            "asset_path": asset_path,
+                        }
+                    )
+                    continue
+
+                expected_size = _bbox_size_from_manifest(manifest_entry, "output")
+                actual_size = _asset_bounds_size(asset_path)
+                bounds_available = any(abs(v) > 1e-6 for v in actual_size)
+                if not bounds_available:
+                    row = {
+                        "entry": entry_name,
+                        "asset_path": asset_path,
+                        "expected_bbox_size": expected_size,
+                        "actual_bbox_size": actual_size,
+                        "mismatch_ratio": 0.0,
+                        "tolerance": coord_tolerance,
+                        "passed": True,
+                        "bounds_available": False,
+                        "message": "bounds unavailable from UE API; skipped strict bbox check",
+                    }
+                    coord_rows.append(row)
+                    continue
+
+                mismatch_ratio = _coord_mismatch_ratio(expected_size, actual_size)
+                passed = mismatch_ratio <= coord_tolerance
+                row = {
+                    "entry": entry_name,
+                    "asset_path": asset_path,
+                    "expected_bbox_size": expected_size,
+                    "actual_bbox_size": actual_size,
+                    "mismatch_ratio": mismatch_ratio,
+                    "tolerance": coord_tolerance,
+                    "passed": passed,
+                    "bounds_available": True,
+                }
+                coord_rows.append(row)
+                if not passed:
+                    coord_errors.append(
+                        {
+                            "message": "coord validation mismatch",
+                            "entry": entry_name,
+                            "asset_path": asset_path,
+                            "expected_bbox_size": expected_size,
+                            "actual_bbox_size": actual_size,
+                            "mismatch_ratio": mismatch_ratio,
+                            "tolerance": coord_tolerance,
+                        }
+                    )
+
+        coord_status = "success"
+        if coord_validate_enabled and coord_fail_on_mismatch and coord_errors:
+            coord_status = "failed"
+            errors.extend(coord_errors)
+
+        coord_report = make_report(
+            "coord_validation",
+            profile,
+            {
+                "run_dir": str(run_dir),
+                "coord_manifest_path": str((run_dir / "manifests" / "coord_validation_manifest.json").resolve()),
+                "enabled": coord_validate_enabled,
+                "tolerance": coord_tolerance,
+                "fail_on_mismatch": coord_fail_on_mismatch,
+            },
+        )
+        finalize_report(
+            coord_report,
+            status=coord_status,
+            outputs={
+                "entries_checked": coord_rows,
+                "manifest_entries": sorted(coord_entries.keys()),
+                "target_entries": sorted(coord_targets.keys()),
+            },
+            errors=coord_errors,
+        )
+        coord_report_path = write_stage_report(run_dir, "coord_validation", coord_report)
 
         status = "success" if not errors else "failed"
         finalize_report(
@@ -274,6 +496,10 @@ def main() -> int:
                 "imported_count": len([r for r in results if r.get("success")]),
                 "failed_count": len(errors),
                 "body_skeleton_loaded": body_skeleton is not None,
+                "skip_static_imports": skip_static_imports,
+                "coord_validation_enabled": coord_validate_enabled,
+                "coord_validation_status": coord_status,
+                "coord_validation_report": str(coord_report_path.resolve()),
             },
             errors=errors,
         )

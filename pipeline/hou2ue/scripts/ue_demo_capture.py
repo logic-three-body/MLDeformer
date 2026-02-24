@@ -197,6 +197,16 @@ def _load_json_if_exists(path: Path) -> Dict[str, Any]:
         return {}
 
 
+def _has_missing_module_error(process_result: Dict[str, Any]) -> bool:
+    lines: List[str] = []
+    for key in ("stdout_tail", "stderr_tail"):
+        value = process_result.get(key, [])
+        if isinstance(value, list):
+            lines.extend(str(v) for v in value)
+    blob = "\n".join(lines).lower()
+    return ("game module" in blob and "could not be found" in blob) or ("module 'mldeformersample'" in blob)
+
+
 def _default_demo_cfg(infer_map: str) -> Dict[str, Any]:
     return {
         "enabled": True,
@@ -425,6 +435,31 @@ def main() -> int:
                     and str(ue_job_report.get("status", "")).lower() == "success"
                     and frame_count >= clip_frames
                 )
+                module_fallback = False
+                if not success and _has_missing_module_error(process_result) and "-game" in cmd:
+                    module_fallback = True
+                    for file in frame_dir.glob("*.png"):
+                        file.unlink(missing_ok=True)
+                    job_json.unlink(missing_ok=True)
+
+                    cmd = [arg for arg in cmd if arg != "-game"]
+                    process_result = _run_guarded_process(
+                        cmd=cmd,
+                        stdout_path=stdout_path,
+                        stderr_path=stderr_path,
+                        timeout_minutes=per_job_minutes,
+                        no_activity_minutes=no_activity_minutes,
+                        repeated_error_threshold=repeated_error_threshold,
+                    )
+                    ue_job_report = _load_json_if_exists(job_json)
+                    frame_count, first_frame, last_frame = _count_frames(frame_dir, image_format)
+                    success = (
+                        process_result["abort_reason"] == ""
+                        and int(process_result["exit_code"]) == 0
+                        and bool(ue_job_report)
+                        and str(ue_job_report.get("status", "")).lower() == "success"
+                        and frame_count >= clip_frames
+                    )
 
                 if first_frame and len(sample_frames) < 6:
                     sample_frames.append(first_frame)
@@ -447,6 +482,7 @@ def main() -> int:
                         "no_activity_minutes": no_activity_minutes,
                         "repeated_error_threshold": repeated_error_threshold,
                     },
+                    "fallback_retry_without_game": module_fallback,
                     "process": process_result,
                     "executor_report": ue_job_report,
                 }

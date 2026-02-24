@@ -96,9 +96,25 @@ def main() -> int:
 
     try:
         cfg = load_config(args.config)
-        stages = ["preflight", "houdini", "convert", "ue_import", "ue_setup", "train", "infer"]
+        stages = [
+            "baseline_sync",
+            "preflight",
+            "houdini",
+            "convert",
+            "ue_import",
+            "ue_setup",
+            "train",
+            "infer",
+            "gt_reference_capture",
+            "gt_source_capture",
+            "gt_compare",
+        ]
         infer_demo_path = run_dir / "reports" / "infer_demo_report.json"
         infer_demo_report = _load_stage_report(infer_demo_path)
+        baseline_sync_path = run_dir / "reports" / "baseline_sync_report.json"
+        gt_compare_path = run_dir / "reports" / "gt_compare_report.json"
+        coord_validation_path = run_dir / "reports" / "coord_validation_report.json"
+        gt_compare_report = _load_stage_report(gt_compare_path)
 
         stage_reports: Dict[str, Dict[str, Any] | None] = {}
         failures: List[Dict[str, Any]] = []
@@ -116,7 +132,10 @@ def main() -> int:
         pipeline_report = {
             "stage": "full_pipeline",
             "profile": args.profile,
-            "started_at": stage_reports.get("preflight", {}) and (stage_reports["preflight"] or {}).get("started_at", ""),
+            "started_at": (
+                (stage_reports.get("baseline_sync") or {}).get("started_at", "")
+                or (stage_reports.get("preflight") or {}).get("started_at", "")
+            ),
             "ended_at": stage_report["started_at"],
             "status": status,
             "inputs": {
@@ -136,6 +155,16 @@ def main() -> int:
                 "infer_demo_status": (
                     str((infer_demo_report or {}).get("status", "missing"))
                     if infer_demo_path.exists()
+                    else "missing"
+                ),
+                "baseline_sync_report": str(baseline_sync_path.resolve()) if baseline_sync_path.exists() else "",
+                "gt_compare_report": str(gt_compare_path.resolve()) if gt_compare_path.exists() else "",
+                "coord_validation_report": (
+                    str(coord_validation_path.resolve()) if coord_validation_path.exists() else ""
+                ),
+                "gt_compare_status": (
+                    str((gt_compare_report or {}).get("status", "missing"))
+                    if gt_compare_path.exists()
                     else "missing"
                 ),
             },
