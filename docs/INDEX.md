@@ -58,7 +58,12 @@
 ### 2.8 `docs/06_appendix`
 - `docs/06_appendix/README_Source_References_CN.md`
 
-### 2.9 仓库根目录 `prototype`（docs 外的实现目录）
+### 2.9 `docs/memory` (进度检查点)
+- `docs/memory/checkpoint-20260224_172438-gt-strict-closure.md`
+- `docs/memory/checkpoint-20260224_185205-strict-closure-impl-progress.md`
+- `docs/memory/checkpoint-20260225-skip-train-validated.md`
+
+### 2.10 仓库根目录 `prototype`（docs 外的实现目录）
 - `prototype/README.md`
 - `prototype/config/repos.lock.yaml`
 - `prototype/config/assets.manifest.yaml`

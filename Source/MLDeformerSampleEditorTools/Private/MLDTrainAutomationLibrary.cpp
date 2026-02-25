@@ -26,6 +26,7 @@
 #include "SkeletalMeshAttributes.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 #include "UObject/UnrealType.h"
 #include "MLDeformerGeomCacheHelpers.h"
 
@@ -1113,6 +1114,193 @@ namespace
 		ApplyModelOverrides(Model, Request.model_overrides_json, OutResult.warnings);
 		return true;
 	}
+
+	FString ObjectPathOrEmpty(const UObject* Object)
+	{
+		return Object ? Object->GetPathName() : FString();
+	}
+
+	FString SerializeJsonObject(const TSharedPtr<FJsonObject>& JsonObject)
+	{
+		if (!JsonObject.IsValid())
+		{
+			return TEXT("{}");
+		}
+
+		FString Out;
+		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
+		FJsonSerializer::Serialize(JsonObject.ToSharedRef(), Writer);
+		return Out;
+	}
+
+	FString SerializeJsonArray(const TArray<TSharedPtr<FJsonValue>>& JsonArray)
+	{
+		FString Out;
+		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
+		FJsonSerializer::Serialize(JsonArray, Writer);
+		return Out;
+	}
+
+	bool TryGetStringPropertyByName(const UObject* Target, const TCHAR* PropertyName, FString& OutValue)
+	{
+		if (!Target)
+		{
+			return false;
+		}
+		const FStrProperty* Property = FindFProperty<FStrProperty>(Target->GetClass(), PropertyName);
+		if (!Property)
+		{
+			return false;
+		}
+		OutValue = Property->GetPropertyValue_InContainer(Target);
+		return true;
+	}
+
+	FString BuildTrainingInputsJson(const UMLDeformerGeomCacheModel* GeomModel)
+	{
+		TArray<TSharedPtr<FJsonValue>> OutArray;
+		if (!GeomModel)
+		{
+			return SerializeJsonArray(OutArray);
+		}
+
+		const TArray<FMLDeformerGeomCacheTrainingInputAnim>& Inputs = GeomModel->GetTrainingInputAnims();
+		OutArray.Reserve(Inputs.Num());
+		for (const FMLDeformerGeomCacheTrainingInputAnim& Input : Inputs)
+		{
+			const TSharedPtr<FJsonObject> Row = MakeShared<FJsonObject>();
+			Row->SetStringField(TEXT("anim_sequence"), ObjectPathOrEmpty(Input.GetAnimSequence()));
+			Row->SetStringField(TEXT("geometry_cache"), ObjectPathOrEmpty(Input.GetGeometryCache()));
+			Row->SetBoolField(TEXT("enabled"), Input.IsEnabled());
+			Row->SetBoolField(TEXT("use_custom_range"), Input.GetUseCustomRange());
+			Row->SetNumberField(TEXT("start_frame"), Input.GetStartFrame());
+			Row->SetNumberField(TEXT("end_frame"), Input.GetEndFrame());
+			if (!Input.GetVertexMask().IsNone())
+			{
+				Row->SetStringField(TEXT("vertex_mask"), Input.GetVertexMask().ToString());
+			}
+			OutArray.Add(MakeShared<FJsonValueObject>(Row));
+		}
+
+		return SerializeJsonArray(OutArray);
+	}
+
+	FString BuildNnmSectionsJson(const UNearestNeighborModel* NNM)
+	{
+		TArray<TSharedPtr<FJsonValue>> OutArray;
+		if (!NNM)
+		{
+			return SerializeJsonArray(OutArray);
+		}
+
+		const int32 NumSections = NNM->GetNumSections();
+		OutArray.Reserve(NumSections);
+		for (int32 SectionIndex = 0; SectionIndex < NumSections; ++SectionIndex)
+		{
+			const UNearestNeighborModelSection* Section = NNM->GetSectionPtr(SectionIndex);
+			if (!Section)
+			{
+				continue;
+			}
+
+			const TSharedPtr<FJsonObject> Row = MakeShared<FJsonObject>();
+			Row->SetNumberField(TEXT("mesh_index"), Section->GetMeshIndex());
+			Row->SetNumberField(TEXT("num_pca_coeffs"), Section->GetNumBasis());
+			Row->SetStringField(TEXT("neighbor_poses"), ObjectPathOrEmpty(Section->GetNeighborPoses()));
+			Row->SetStringField(TEXT("neighbor_meshes"), ObjectPathOrEmpty(Section->GetNeighborMeshes()));
+
+			FString VertexMapString;
+			if (TryGetStringPropertyByName(Section, TEXT("VertexMapString"), VertexMapString) && !VertexMapString.IsEmpty())
+			{
+				Row->SetStringField(TEXT("vertex_map_string"), VertexMapString);
+			}
+
+			const FString ExternalTxt = Section->GetExternalTxtFile();
+			if (!ExternalTxt.IsEmpty())
+			{
+				Row->SetStringField(TEXT("external_txt_file"), ExternalTxt);
+			}
+
+			TArray<TSharedPtr<FJsonValue>> ExcludedFrames;
+			for (const int32 Frame : Section->GetExcludedFrames())
+			{
+				ExcludedFrames.Add(MakeShared<FJsonValueNumber>(Frame));
+			}
+			Row->SetArrayField(TEXT("excluded_frames"), ExcludedFrames);
+			OutArray.Add(MakeShared<FJsonValueObject>(Row));
+		}
+
+		return SerializeJsonArray(OutArray);
+	}
+
+	FString BuildModelOverridesJson(const UMLDeformerModel* Model)
+	{
+		const TSharedPtr<FJsonObject> Overrides = MakeShared<FJsonObject>();
+		if (!Model)
+		{
+			return SerializeJsonObject(Overrides);
+		}
+
+		if (const UNeuralMorphModel* NMM = Cast<UNeuralMorphModel>(Model))
+		{
+			const UEnum* ModeEnum = StaticEnum<ENeuralMorphMode>();
+			const FString ModeName = ModeEnum ? ModeEnum->GetNameStringByValue(static_cast<int64>(NMM->GetModelMode())) : TEXT("Local");
+			Overrides->SetStringField(TEXT("mode"), ModeName);
+			Overrides->SetNumberField(TEXT("local_num_morph_targets_per_bone"), NMM->GetLocalNumMorphsPerBone());
+			Overrides->SetNumberField(TEXT("global_num_morph_targets"), NMM->GetGlobalNumMorphs());
+			Overrides->SetNumberField(TEXT("num_iterations"), NMM->GetNumIterations());
+			Overrides->SetNumberField(TEXT("local_num_hidden_layers"), NMM->GetLocalNumHiddenLayers());
+			Overrides->SetNumberField(TEXT("local_num_neurons_per_layer"), NMM->GetLocalNumNeuronsPerLayer());
+			Overrides->SetNumberField(TEXT("global_num_hidden_layers"), NMM->GetGlobalNumHiddenLayers());
+			Overrides->SetNumberField(TEXT("global_num_neurons_per_layer"), NMM->GetGlobalNumNeuronsPerLayer());
+			Overrides->SetNumberField(TEXT("batch_size"), NMM->GetBatchSize());
+			Overrides->SetNumberField(TEXT("learning_rate"), NMM->GetLearningRate());
+			Overrides->SetNumberField(TEXT("regularization_factor"), NMM->GetRegularizationFactor());
+			Overrides->SetNumberField(TEXT("smooth_loss_beta"), NMM->GetSmoothLossBeta());
+			Overrides->SetBoolField(TEXT("b_enable_bone_masks"), NMM->IsBoneMaskingEnabled());
+			return SerializeJsonObject(Overrides);
+		}
+
+		if (const UNearestNeighborModel* NNM = Cast<UNearestNeighborModel>(Model))
+		{
+			Overrides->SetBoolField(TEXT("b_use_pca"), NNM->DoesUsePCA());
+			Overrides->SetNumberField(TEXT("num_basis_per_section"), NNM->GetNumBasisPerSection());
+			Overrides->SetBoolField(TEXT("b_use_dual_quaternion_deltas"), NNM->DoesUseDualQuaternionDeltas());
+			Overrides->SetNumberField(TEXT("decay_factor"), NNM->GetDecayFactor());
+			Overrides->SetNumberField(TEXT("nearest_neighbor_offset_weight"), NNM->GetNearestNeighborOffsetWeight());
+			Overrides->SetNumberField(TEXT("num_iterations"), NNM->GetNumIterations());
+			Overrides->SetNumberField(TEXT("batch_size"), NNM->GetBatchSize());
+			Overrides->SetNumberField(TEXT("learning_rate"), NNM->GetLearningRate());
+			Overrides->SetNumberField(TEXT("early_stop_epochs"), NNM->GetEarlyStopEpochs());
+			Overrides->SetNumberField(TEXT("regularization_factor"), NNM->GetRegularizationFactor());
+			Overrides->SetNumberField(TEXT("smooth_loss_beta"), NNM->GetSmoothLossBeta());
+			Overrides->SetBoolField(TEXT("b_use_rbf"), NNM->DoesUseRBF());
+			Overrides->SetNumberField(TEXT("rbf_sigma"), NNM->GetRBFSigma());
+
+			TArray<TSharedPtr<FJsonValue>> HiddenLayerDims;
+			for (const int32 Dim : NNM->GetHiddenLayerDims())
+			{
+				HiddenLayerDims.Add(MakeShared<FJsonValueNumber>(Dim));
+			}
+			Overrides->SetArrayField(TEXT("hidden_layer_dims"), HiddenLayerDims);
+			return SerializeJsonObject(Overrides);
+		}
+
+		return SerializeJsonObject(Overrides);
+	}
+
+	FString ResolveModelType(const UMLDeformerModel* Model)
+	{
+		if (Cast<UNeuralMorphModel>(Model))
+		{
+			return TEXT("NMM");
+		}
+		if (Cast<UNearestNeighborModel>(Model))
+		{
+			return TEXT("NNM");
+		}
+		return Model ? Model->GetClass()->GetName() : TEXT("");
+	}
 }
 
 FMldTrainResult UMLDTrainAutomationLibrary::TrainDeformerAsset(const FMldTrainRequest& Request)
@@ -1255,6 +1443,52 @@ FMldSetupResult UMLDTrainAutomationLibrary::SetupDeformerAsset(const FMldSetupRe
 
 	Result.success = true;
 	Result.message = TEXT("Setup completed.");
+	return Result;
+}
+
+FMldDumpResult UMLDTrainAutomationLibrary::DumpDeformerSetup(const FMldDumpRequest& Request)
+{
+	FMldDumpResult Result;
+
+	if (Request.asset_path.TrimStartAndEnd().IsEmpty())
+	{
+		Result.message = TEXT("asset_path is empty.");
+		return Result;
+	}
+
+	UMLDeformerAsset* DeformerAsset = nullptr;
+	UE::MLDeformer::FMLDeformerEditorToolkit* Toolkit = nullptr;
+	TUniquePtr<UE::MLDeformer::FMLDeformerScopedEditor> ScopedEditor;
+	FString Message;
+
+	if (!OpenEditorForAsset(Request.asset_path, DeformerAsset, Toolkit, ScopedEditor, Message))
+	{
+		Result.message = Message;
+		return Result;
+	}
+
+	UE::MLDeformer::FMLDeformerEditorModel* ActiveModel = Toolkit ? Toolkit->GetActiveModel() : nullptr;
+	UMLDeformerModel* RuntimeModel = ActiveModel ? ActiveModel->GetModel() : nullptr;
+	if (!RuntimeModel)
+	{
+		Result.message = TEXT("No active runtime model found.");
+		return Result;
+	}
+
+	Result.model_type = ResolveModelType(RuntimeModel);
+	Result.skeletal_mesh = ObjectPathOrEmpty(RuntimeModel->GetSkeletalMesh());
+
+	if (const UMLDeformerVizSettings* VizSettings = RuntimeModel->GetVizSettings())
+	{
+		Result.deformer_graph = ObjectPathOrEmpty(VizSettings->GetDeformerGraph());
+		Result.test_anim = ObjectPathOrEmpty(VizSettings->GetTestAnimSequence());
+	}
+
+	Result.training_input_anims_json = BuildTrainingInputsJson(Cast<UMLDeformerGeomCacheModel>(RuntimeModel));
+	Result.nnm_sections_json = BuildNnmSectionsJson(Cast<UNearestNeighborModel>(RuntimeModel));
+	Result.model_overrides_json = BuildModelOverridesJson(RuntimeModel);
+	Result.success = true;
+	Result.message = TEXT("Dump completed.");
 	return Result;
 }
 

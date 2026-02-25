@@ -59,6 +59,38 @@
 - 训练输入帧数是否满足模型要求。
 - 输入维度与网络配置一致。
 
+### 6.3 ABC 导入坐标系转换（关键陷阱）
+
+#### 问题背景
+Houdini 与 UE 使用不同坐标系：
+- Houdini：右手 Y-up，单位米
+- UE：左手 Z-up，单位厘米
+
+#### Houdini 侧处理
+本项目在 Houdini VEX 导出阶段已完成坐标变换：
+- Y↔Z 轴交换
+- ×100 缩放（米→厘米）
+- 导出的 ABC 文件已处于 UE 坐标空间
+
+#### UE 侧陷阱：双重变换
+UE 的 `AbcImportSettings.conversion_settings` 默认使用 `Maya` preset，会自动叠加一次 Y↔Z 旋转。由于 Houdini 已做过变换，这会导致**双重坐标变换**，表现为：
+- 几何体轴向错位或翻转
+- 尺度不一致
+- 训练输入与推理输入不匹配
+
+#### 正确做法
+```python
+# ue_import.py → _build_abc_options()
+options.conversion_settings.preset = unreal.AbcConversionPreset.CUSTOM
+options.conversion_settings.rotation = unreal.Vector(0, 0, 0)      # identity
+options.conversion_settings.scale   = unreal.Vector(1, 1, 1)       # identity
+```
+
+#### coord_validation 增强
+- 导入后自动检查 GeomCache 包围盒与 Houdini 导出 bbox 的一致性。
+- 若导入后资产无 bounds 信息（常见于自动化场景），系统会输出 `WARNING` 而非静默通过。
+- 相关报告：`reports/coord_validation_report.json`。
+
 ## 7. 数据版本管理建议
 - 每次训练实验固定：
   - 数据版本号

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import traceback
@@ -99,6 +100,22 @@ def _collect_frames(frames_dir: Path) -> List[Path]:
     return sorted([p for p in frames_dir.rglob("*.png") if p.is_file()])
 
 
+def _thresholds_hash(thresholds: Dict[str, float]) -> str:
+    raw = json.dumps(thresholds, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _body_roi(gray: np.ndarray) -> np.ndarray:
+    height, width = gray.shape
+    x0 = int(width * 0.2)
+    x1 = int(width * 0.8)
+    y0 = int(height * 0.15)
+    y1 = int(height * 0.9)
+    if x1 <= x0 or y1 <= y0:
+        return gray
+    return gray[y0:y1, x0:x1]
+
+
 def _safe_read_json(path: Path) -> Dict[str, Any]:
     if not path.exists():
         return {}
@@ -185,12 +202,21 @@ def main() -> int:
 
         compare_cfg = gt_cfg.get("compare", {}) if isinstance(gt_cfg.get("compare"), dict) else {}
         thresholds = compare_cfg.get("thresholds", {}) if isinstance(compare_cfg.get("thresholds"), dict) else {}
+        metrics_profile = str(compare_cfg.get("metrics_profile", "strict") or "strict")
 
         ssim_mean_min = float(thresholds.get("ssim_mean_min", 0.995))
         ssim_p05_min = float(thresholds.get("ssim_p05_min", 0.985))
         psnr_mean_min = float(thresholds.get("psnr_mean_min", 35.0))
         psnr_min_min = float(thresholds.get("psnr_min_min", 30.0))
         edge_iou_mean_min = float(thresholds.get("edge_iou_mean_min", 0.97))
+        thresholds_obj = {
+            "ssim_mean_min": ssim_mean_min,
+            "ssim_p05_min": ssim_p05_min,
+            "psnr_mean_min": psnr_mean_min,
+            "psnr_min_min": psnr_min_min,
+            "edge_iou_mean_min": edge_iou_mean_min,
+        }
+        thresholds_hash = _thresholds_hash(thresholds_obj)
         fail_on_count_mismatch = bool(compare_cfg.get("fail_on_frame_count_mismatch", True))
 
         ref_dir = run_dir / "workspace" / "staging" / args.profile / "gt" / "reference" / "frames"
@@ -241,6 +267,10 @@ def main() -> int:
                 ssim = _ssim_global(ref_gray, src_gray)
                 psnr = _psnr(ref_gray, src_gray)
                 edge_iou = _edge_iou(ref_gray, src_gray)
+                ref_roi = _body_roi(ref_gray)
+                src_roi = _body_roi(src_gray)
+                roi_ssim = _ssim_global(ref_roi, src_roi)
+                roi_psnr = _psnr(ref_roi, src_roi)
 
                 rows.append(
                     {
@@ -250,6 +280,8 @@ def main() -> int:
                         "ssim": ssim,
                         "psnr": psnr,
                         "edge_iou": edge_iou,
+                        "body_roi_ssim": roi_ssim,
+                        "body_roi_psnr": roi_psnr,
                     }
                 )
 
@@ -262,6 +294,8 @@ def main() -> int:
             ssim_values = np.asarray([row["ssim"] for row in rows], dtype=np.float64)
             psnr_values = np.asarray([row["psnr"] for row in rows], dtype=np.float64)
             edge_values = np.asarray([row["edge_iou"] for row in rows], dtype=np.float64)
+            roi_ssim_values = np.asarray([row["body_roi_ssim"] for row in rows], dtype=np.float64)
+            roi_psnr_values = np.asarray([row["body_roi_psnr"] for row in rows], dtype=np.float64)
 
             metrics_summary = {
                 "frame_count_compared": int(len(rows)),
@@ -270,6 +304,10 @@ def main() -> int:
                 "psnr_mean": float(np.mean(psnr_values)),
                 "psnr_min": float(np.min(psnr_values)),
                 "edge_iou_mean": float(np.mean(edge_values)),
+                "body_roi_ssim_mean": float(np.mean(roi_ssim_values)),
+                "body_roi_ssim_p05": float(np.percentile(roi_ssim_values, 5)),
+                "body_roi_psnr_mean": float(np.mean(roi_psnr_values)),
+                "body_roi_psnr_min": float(np.min(roi_psnr_values)),
             }
 
             gate_pass = (
@@ -287,6 +325,32 @@ def main() -> int:
             sorted_rows = sorted(rows, key=lambda r: (r["ssim"], r["psnr"]))
             worst_frames = sorted_rows[:10]
 
+            window_size = 100
+            window_metrics: List[Dict[str, Any]] = []
+            for start in range(0, len(rows), window_size):
+                chunk = rows[start : start + window_size]
+                if not chunk:
+                    continue
+                chunk_ssim = np.asarray([v["ssim"] for v in chunk], dtype=np.float64)
+                chunk_psnr = np.asarray([v["psnr"] for v in chunk], dtype=np.float64)
+                chunk_edge = np.asarray([v["edge_iou"] for v in chunk], dtype=np.float64)
+                chunk_roi_ssim = np.asarray([v["body_roi_ssim"] for v in chunk], dtype=np.float64)
+                chunk_roi_psnr = np.asarray([v["body_roi_psnr"] for v in chunk], dtype=np.float64)
+                window_metrics.append(
+                    {
+                        "start_frame": int(chunk[0]["frame_index"]),
+                        "end_frame": int(chunk[-1]["frame_index"]),
+                        "count": len(chunk),
+                        "ssim_mean": float(np.mean(chunk_ssim)),
+                        "ssim_p05": float(np.percentile(chunk_ssim, 5)),
+                        "psnr_mean": float(np.mean(chunk_psnr)),
+                        "psnr_min": float(np.min(chunk_psnr)),
+                        "edge_iou_mean": float(np.mean(chunk_edge)),
+                        "body_roi_ssim_mean": float(np.mean(chunk_roi_ssim)),
+                        "body_roi_psnr_mean": float(np.mean(chunk_roi_psnr)),
+                    }
+                )
+
             heatmaps = []
             heatmap_root = run_dir / "workspace" / "staging" / args.profile / "gt" / "compare" / "heatmaps"
             for row in worst_frames[:5]:
@@ -300,13 +364,9 @@ def main() -> int:
                 errors.append(
                     {
                         "message": "ground-truth metrics did not meet strict thresholds",
-                        "thresholds": {
-                            "ssim_mean_min": ssim_mean_min,
-                            "ssim_p05_min": ssim_p05_min,
-                            "psnr_mean_min": psnr_mean_min,
-                            "psnr_min_min": psnr_min_min,
-                            "edge_iou_mean_min": edge_iou_mean_min,
-                        },
+                        "thresholds": thresholds_obj,
+                        "strict_profile_name": metrics_profile,
+                        "strict_thresholds_hash": thresholds_hash,
                         "metrics": metrics_summary,
                     }
                 )
@@ -320,14 +380,12 @@ def main() -> int:
             "reference_frame_count": len(ref_frames),
             "source_frame_count": len(src_frames),
             "fail_on_frame_count_mismatch": fail_on_count_mismatch,
-            "thresholds": {
-                "ssim_mean_min": ssim_mean_min,
-                "ssim_p05_min": ssim_p05_min,
-                "psnr_mean_min": psnr_mean_min,
-                "psnr_min_min": psnr_min_min,
-                "edge_iou_mean_min": edge_iou_mean_min,
-            },
+            "strict_profile_name": metrics_profile,
+            "strict_thresholds_hash": thresholds_hash,
+            "thresholds": thresholds_obj,
             "metrics": metrics_summary,
+            "window_metrics_100f": window_metrics if rows else [],
+            "body_roi": {"x0_ratio": 0.2, "x1_ratio": 0.8, "y0_ratio": 0.15, "y1_ratio": 0.9},
             "worst_frames": worst_frames,
             "heatmaps": heatmaps,
         }

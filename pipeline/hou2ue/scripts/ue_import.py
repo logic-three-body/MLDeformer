@@ -74,6 +74,20 @@ def _build_abc_options() -> Optional[unreal.AbcImportSettings]:
     try:
         options = unreal.AbcImportSettings()
         _set_prop_safe(options, "import_type", unreal.AlembicImportType.GEOMETRY_CACHE)
+        # Disable UE's built-in axis conversion — the Houdini side already
+        # baked Y<->Z swap + x100 scale in the VEX coord transform.  Leaving
+        # the default Maya preset would double-apply the axis rotation.
+        try:
+            conv = options.get_editor_property("conversion_settings")
+            if conv is not None:
+                _set_prop_safe(conv, "preset", unreal.AbcConversionPreset.CUSTOM)
+                _set_prop_safe(conv, "flip_u", False)
+                _set_prop_safe(conv, "flip_v", False)
+                _set_prop_safe(conv, "rotation", unreal.Vector(0.0, 0.0, 0.0))
+                _set_prop_safe(conv, "scale", unreal.Vector(1.0, 1.0, 1.0))
+                _set_prop_safe(options, "conversion_settings", conv)
+        except Exception:
+            pass
         # Keep source track/object names so MLDeformer can match against skeletal mesh geometry parts.
         try:
             gc_settings = options.get_editor_property("geometry_cache_settings")
@@ -419,6 +433,12 @@ def main() -> int:
                 actual_size = _asset_bounds_size(asset_path)
                 bounds_available = any(abs(v) > 1e-6 for v in actual_size)
                 if not bounds_available:
+                    unreal.log_warning(
+                        f"[coord_validation] Bounds unavailable for '{entry_name}' "
+                        f"({asset_path}). Strict bbox check SKIPPED — "
+                        f"double-transform errors cannot be detected. "
+                        f"Expected bbox size: {expected_size}"
+                    )
                     row = {
                         "entry": entry_name,
                         "asset_path": asset_path,
@@ -428,7 +448,7 @@ def main() -> int:
                         "tolerance": coord_tolerance,
                         "passed": True,
                         "bounds_available": False,
-                        "message": "bounds unavailable from UE API; skipped strict bbox check",
+                        "message": "WARNING: bounds unavailable from UE API; skipped strict bbox check — potential double-transform undetectable",
                     }
                     coord_rows.append(row)
                     continue

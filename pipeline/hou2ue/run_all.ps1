@@ -47,6 +47,7 @@ function Assert-CommandOrPath([string]$ExeOrCmd, [string]$DisplayName) {
 
 function Get-StageTimeoutMinutes([string]$StageName) {
     switch ($StageName) {
+        "reference_setup_dump" { return 180 }
         "baseline_sync" { return 360 }
         "preflight" { return 30 }
         "houdini" { return $HoudiniMaxMinutes }
@@ -279,6 +280,7 @@ function Invoke-PythonScript(
     }
     $scriptFile = [System.IO.Path]::GetFileName($ScriptPath)
     $reportStage = switch ($scriptFile) {
+        "dump_reference_setup.py" { "reference_setup_dump" }
         "sync_reference_baseline.py" { "baseline_sync" }
         "parse_hip.py" { "preflight" }
         "houdini_cook.py" { "houdini" }
@@ -310,17 +312,27 @@ function Invoke-PythonScript(
     }
 }
 
-function Invoke-UnrealPythonScript([string]$ScriptPath) {
+function Invoke-UnrealPythonScript(
+    [string]$ScriptPath,
+    [hashtable]$EnvOverrides = @{}
+) {
     $oldConfig = $env:HOU2UE_CONFIG
     $oldProfile = $env:HOU2UE_PROFILE
     $oldRunDir = $env:HOU2UE_RUN_DIR
     $oldOutRoot = $env:HOU2UE_OUT_ROOT
+    $overrideBackup = @{}
 
     try {
         $env:HOU2UE_CONFIG = $ResolvedConfigPath
         $env:HOU2UE_PROFILE = $Profile
         $env:HOU2UE_RUN_DIR = $ResolvedRunDir
         $env:HOU2UE_OUT_ROOT = $ResolvedOutRoot
+
+        foreach ($key in $EnvOverrides.Keys) {
+            $overrideBackup[$key] = [System.Environment]::GetEnvironmentVariable($key, "Process")
+            $value = [string]$EnvOverrides[$key]
+            [System.Environment]::SetEnvironmentVariable($key, $value, "Process")
+        }
 
         $scriptArgPath = $ScriptPath -replace "\\", "/"
         $executeArg = "-ExecutePythonScript=`"$scriptArgPath`""
@@ -343,16 +355,34 @@ function Invoke-UnrealPythonScript([string]$ScriptPath) {
             "ue_infer.py" { "infer" }
             default { "ue_stage" }
         }
+        $reportPath = if (-not [string]::IsNullOrWhiteSpace($reportStage)) {
+            Join-Path (Join-Path $ResolvedRunDir "reports") ("{0}_report.json" -f $reportStage)
+        } else {
+            ""
+        }
+        $reportMtimeBefore = $null
+        if (-not [string]::IsNullOrWhiteSpace($reportPath) -and (Test-Path $reportPath)) {
+            $reportMtimeBefore = (Get-Item -LiteralPath $reportPath).LastWriteTimeUtc
+        }
 
         $proc = Start-Process -FilePath $ResolvedUEEditorExe -ArgumentList $argList -Wait -PassThru
+        $reportFresh = $false
+        if (-not [string]::IsNullOrWhiteSpace($reportPath) -and (Test-Path $reportPath)) {
+            $reportMtimeAfter = (Get-Item -LiteralPath $reportPath).LastWriteTimeUtc
+            if ($null -eq $reportMtimeBefore) {
+                $reportFresh = $true
+            }
+            elseif ($reportMtimeAfter -gt $reportMtimeBefore) {
+                $reportFresh = $true
+            }
+        }
         if ($null -eq $proc -or $proc.ExitCode -ne 0) {
             $code = if ($null -eq $proc) { -1 } else { [int]$proc.ExitCode }
             if (-not [string]::IsNullOrWhiteSpace($reportStage)) {
-                $reportPath = Join-Path (Join-Path $ResolvedRunDir "reports") ("{0}_report.json" -f $reportStage)
                 if (Test-Path $reportPath) {
                     try {
                         $reportObj = (Get-Content -Raw $reportPath) | ConvertFrom-Json
-                        if ($null -ne $reportObj -and [string]$reportObj.status -eq "success") {
+                        if ($null -ne $reportObj -and [string]$reportObj.status -eq "success" -and $reportFresh) {
                             Write-Warning "UnrealEditor returned exit code $code for $scriptFile, but report status is success. Continuing."
                             return
                         }
@@ -367,9 +397,11 @@ function Invoke-UnrealPythonScript([string]$ScriptPath) {
         }
 
         if (-not [string]::IsNullOrWhiteSpace($reportStage)) {
-            $reportPath = Join-Path (Join-Path $ResolvedRunDir "reports") ("{0}_report.json" -f $reportStage)
             if (-not (Test-Path $reportPath)) {
                 throw "Missing stage report after Unreal Python stage: $reportPath"
+            }
+            if (-not $reportFresh) {
+                throw "Stage report is stale or unchanged after Unreal Python stage: $reportPath"
             }
 
             try {
@@ -388,6 +420,9 @@ function Invoke-UnrealPythonScript([string]$ScriptPath) {
         $env:HOU2UE_PROFILE = $oldProfile
         $env:HOU2UE_RUN_DIR = $oldRunDir
         $env:HOU2UE_OUT_ROOT = $oldOutRoot
+        foreach ($key in $overrideBackup.Keys) {
+            [System.Environment]::SetEnvironmentVariable($key, $overrideBackup[$key], "Process")
+        }
     }
 }
 
@@ -465,6 +500,7 @@ $ueTrainScript = Join-Path $ScriptsDir "ue_train.py"
 $ueDemoCaptureScript = Join-Path $ScriptsDir "ue_demo_capture.py"
 $ueInferScript = Join-Path $ScriptsDir "ue_infer.py"
 $baselineSyncScript = Join-Path $ScriptsDir "sync_reference_baseline.py"
+$dumpReferenceSetupScript = Join-Path $ScriptsDir "dump_reference_setup.py"
 $ueCaptureMainSeqScript = Join-Path $ScriptsDir "ue_capture_mainseq.py"
 $gtCompareScript = Join-Path $ScriptsDir "compare_groundtruth.py"
 $buildReportScript = Join-Path $ScriptsDir "build_report.py"
@@ -512,12 +548,120 @@ function Run-Stage([string]$StageName) {
             Invoke-UnrealPythonScript -ScriptPath $ueImportScript
         }
         "ue_setup" {
+            Assert-Python
             Assert-UE
-            Invoke-UnrealPythonScript -ScriptPath $ueSetupScript
+            Invoke-PythonScript -Interpreter $ResolvedPythonExe -ScriptPath $dumpReferenceSetupScript -StageName "reference_setup_dump"
+
+            $skipTrain = $false
+            if ($null -ne $ConfigObj.ue -and $null -ne $ConfigObj.ue.training -and $null -ne $ConfigObj.ue.training.skip_train) {
+                $skipTrain = [bool]$ConfigObj.ue.training.skip_train
+            }
+
+            if ($skipTrain) {
+                Write-Host "[hou2ue] skip_train=true: Skipping ue_setup to preserve reference deformer weights."
+                $setupReport = @{
+                    stage = "ue_setup"
+                    profile = $Profile
+                    status = "success"
+                    started_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+                    ended_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+                    inputs = @{ config = $ResolvedConfigPath; profile = $Profile; run_dir = $ResolvedRunDir }
+                    outputs = @{
+                        skipped = $true
+                        reason = "skip_train enabled - preserving reference deformer weights from baseline_sync"
+                    }
+                    errors = @()
+                } | ConvertTo-Json -Depth 10
+                $setupReport | Set-Content -Encoding UTF8 (Join-Path (Join-Path $ResolvedRunDir "reports") "ue_setup_report.json")
+            }
+            else {
+                Invoke-UnrealPythonScript -ScriptPath $ueSetupScript
+            }
         }
         "train" {
-            Assert-UE
-            Invoke-UnrealPythonScript -ScriptPath $ueTrainScript
+            $skipTrain = $false
+            if ($null -ne $ConfigObj.ue -and $null -ne $ConfigObj.ue.training -and $null -ne $ConfigObj.ue.training.skip_train) {
+                $skipTrain = [bool]$ConfigObj.ue.training.skip_train
+            }
+
+            if ($skipTrain) {
+                Write-Host "[hou2ue] skip_train=true: Re-syncing reference deformer uassets instead of retraining."
+                $refUProject = [string]$ConfigObj.reference_baseline.reference_uproject
+                $refRoot = Resolve-AbsolutePath (Split-Path $refUProject -Parent) $ProjectRoot
+                $deformerFiles = @(
+                    "Content/Characters/Emil/Deformers/MLD_NMMl_flesh_upperBody.uasset",
+                    "Content/Characters/Emil/Deformers/MLD_NN_upperCostume.uasset",
+                    "Content/Characters/Emil/Deformers/MLD_NN_lowerCostume.uasset"
+                )
+                $copyResults = @()
+                foreach ($rel in $deformerFiles) {
+                    $src = Join-Path $refRoot $rel
+                    $dst = Join-Path $ProjectRoot $rel
+                    if (Test-Path $src) {
+                        Copy-Item -LiteralPath $src -Destination $dst -Force
+                        $srcHash = (Get-FileHash -Path $src -Algorithm SHA256).Hash
+                        $dstHash = (Get-FileHash -Path $dst -Algorithm SHA256).Hash
+                        $copyResults += @{
+                            file = $rel
+                            copied = $true
+                            sha256_match = ($srcHash -eq $dstHash)
+                            sha256 = $srcHash
+                        }
+                        Write-Host "  Copied: $rel (SHA256=$srcHash match=$($srcHash -eq $dstHash))"
+                    }
+                    else {
+                        $copyResults += @{ file = $rel; copied = $false; error = "Source not found: $src" }
+                        Write-Warning "  Missing reference deformer: $src"
+                    }
+                }
+                $trainReport = @{
+                    stage = "train"
+                    profile = $Profile
+                    status = "success"
+                    started_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+                    ended_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+                    inputs = @{ config = $ResolvedConfigPath; profile = $Profile; run_dir = $ResolvedRunDir }
+                    outputs = @{
+                        skipped = $true
+                        reason = "skip_train enabled - using reference deformer weights directly"
+                        reference_root = $refRoot
+                        deformer_copies = $copyResults
+                    }
+                    errors = @()
+                } | ConvertTo-Json -Depth 10
+                $trainReport | Set-Content -Encoding UTF8 (Join-Path (Join-Path $ResolvedRunDir "reports") "train_report.json")
+                Write-Host "[hou2ue] skip_train: Synthetic train_report.json written."
+            }
+            else {
+                Assert-UE
+                $detCfg = $null
+                if ($null -ne $ConfigObj -and $null -ne $ConfigObj.ue -and $null -ne $ConfigObj.ue.training) {
+                    $detCfg = $ConfigObj.ue.training.determinism
+                }
+
+                $seed = 3407
+                $enabled = $false
+                $torchDeterministic = $true
+                $cudnnDeterministic = $true
+                $cudnnBenchmark = $false
+
+                if ($null -ne $detCfg) {
+                    if ($null -ne $detCfg.seed) { $seed = [int]$detCfg.seed }
+                    if ($null -ne $detCfg.enabled) { $enabled = [bool]$detCfg.enabled }
+                    if ($null -ne $detCfg.torch_deterministic) { $torchDeterministic = [bool]$detCfg.torch_deterministic }
+                    if ($null -ne $detCfg.cudnn_deterministic) { $cudnnDeterministic = [bool]$detCfg.cudnn_deterministic }
+                    if ($null -ne $detCfg.cudnn_benchmark) { $cudnnBenchmark = [bool]$detCfg.cudnn_benchmark }
+                }
+
+                $envOverrides = @{
+                    "HOU2UE_TRAIN_DETERMINISM_ENABLED" = $(if ($enabled) { "1" } else { "0" })
+                    "HOU2UE_TRAIN_SEED" = [string]$seed
+                    "HOU2UE_TORCH_DETERMINISTIC" = $(if ($torchDeterministic) { "1" } else { "0" })
+                    "HOU2UE_CUDNN_DETERMINISTIC" = $(if ($cudnnDeterministic) { "1" } else { "0" })
+                    "HOU2UE_CUDNN_BENCHMARK" = $(if ($cudnnBenchmark) { "1" } else { "0" })
+                }
+                Invoke-UnrealPythonScript -ScriptPath $ueTrainScript -EnvOverrides $envOverrides
+            }
         }
         "infer" {
             Assert-UE

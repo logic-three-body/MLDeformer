@@ -108,3 +108,46 @@ struct MLDEFORMERSAMPLEEDITORTOOLS_API FMldSetupResult
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MLDeformer")
 	TArray<FString> warnings;
 };
+
+USTRUCT(BlueprintType)
+struct MLDEFORMERSAMPLEEDITORTOOLS_API FMldDumpRequest
+{
+	GENERATED_BODY()
+
+	/** Package path to deformer asset, e.g. /Game/Characters/Emil/Deformers/MLD_NMMl_flesh_upperBody */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MLDeformer")
+	FString asset_path;
+};
+
+USTRUCT(BlueprintType)
+struct MLDEFORMERSAMPLEEDITORTOOLS_API FMldDumpResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MLDeformer")
+	bool success = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MLDeformer")
+	FString message;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MLDeformer")
+	FString model_type;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MLDeformer")
+	FString skeletal_mesh;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MLDeformer")
+	FString deformer_graph;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MLDeformer")
+	FString test_anim;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MLDeformer")
+	FString training_input_anims_json;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MLDeformer")
+	FString nnm_sections_json;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MLDeformer")
+	FString model_overrides_json;
+};

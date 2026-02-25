@@ -29,4 +29,10 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "MLDeformer|Automation")
 	static FMldSetupResult SetupDeformerAsset(const FMldSetupRequest& Request);
+
+	/**
+	 * Dump a deformer asset setup into JSON payloads for strict clone/repro checks.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MLDeformer|Automation")
+	static FMldDumpResult DumpDeformerSetup(const FMldDumpRequest& Request);
 };

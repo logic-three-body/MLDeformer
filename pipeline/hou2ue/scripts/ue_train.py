@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import traceback
@@ -112,6 +113,73 @@ def _build_request(asset_path: str, model_type: str):
     return req
 
 
+def _as_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("1", "true", "yes", "on"):
+            return True
+        if v in ("0", "false", "no", "off"):
+            return False
+    return default
+
+
+def _env_or_default(name: str, default: Any) -> Any:
+    value = os.environ.get(name, "")
+    if value == "":
+        return default
+    return value
+
+
+def _resolve_determinism(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    ue_cfg = cfg.get("ue", {}) if isinstance(cfg.get("ue"), dict) else {}
+    training_cfg = ue_cfg.get("training", {}) if isinstance(ue_cfg.get("training"), dict) else {}
+    det_cfg = training_cfg.get("determinism", {}) if isinstance(training_cfg.get("determinism"), dict) else {}
+
+    enabled = _as_bool(det_cfg.get("enabled", True), True)
+    seed = int(det_cfg.get("seed", 3407))
+    torch_deterministic = _as_bool(det_cfg.get("torch_deterministic", True), True)
+    cudnn_deterministic = _as_bool(det_cfg.get("cudnn_deterministic", True), True)
+    cudnn_benchmark = _as_bool(det_cfg.get("cudnn_benchmark", False), False)
+
+    enabled = _as_bool(_env_or_default("HOU2UE_TRAIN_DETERMINISM_ENABLED", enabled), enabled)
+    seed = int(_env_or_default("HOU2UE_TRAIN_SEED", seed))
+    torch_deterministic = _as_bool(_env_or_default("HOU2UE_TORCH_DETERMINISTIC", torch_deterministic), torch_deterministic)
+    cudnn_deterministic = _as_bool(_env_or_default("HOU2UE_CUDNN_DETERMINISTIC", cudnn_deterministic), cudnn_deterministic)
+    cudnn_benchmark = _as_bool(_env_or_default("HOU2UE_CUDNN_BENCHMARK", cudnn_benchmark), cudnn_benchmark)
+
+    return {
+        "enabled": enabled,
+        "seed": seed,
+        "torch_deterministic": torch_deterministic,
+        "cudnn_deterministic": cudnn_deterministic,
+        "cudnn_benchmark": cudnn_benchmark,
+    }
+
+
+def _apply_determinism_env(settings: Dict[str, Any]) -> Dict[str, str]:
+    seed = int(settings.get("seed", 3407))
+    applied = {
+        "PYTHONHASHSEED": str(seed),
+        "HOU2UE_TRAIN_SEED": str(seed),
+        "HOU2UE_TRAIN_DETERMINISM_ENABLED": "1" if bool(settings.get("enabled", True)) else "0",
+        "HOU2UE_TORCH_DETERMINISTIC": "1" if bool(settings.get("torch_deterministic", True)) else "0",
+        "HOU2UE_CUDNN_DETERMINISTIC": "1" if bool(settings.get("cudnn_deterministic", True)) else "0",
+        "HOU2UE_CUDNN_BENCHMARK": "1" if bool(settings.get("cudnn_benchmark", False)) else "0",
+    }
+    for key, value in applied.items():
+        os.environ[key] = value
+    return applied
+
+
+def _write_json(path: Path, payload: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+
+
 def _train_single_asset(asset_path: str, model_type: str, project_dir: Path) -> Dict[str, Any]:
     train_lib = getattr(unreal, "MLDTrainAutomationLibrary", None)
     if train_lib is None:
@@ -168,6 +236,8 @@ def main() -> int:
         project_dir = Path(unreal.Paths.project_dir())
         deformer_cfg = require_nested(cfg, ("ue", "deformer_assets"))
         order = list(require_nested(cfg, ("ue", "training_order")))
+        determinism = _resolve_determinism(cfg)
+        applied_env = _apply_determinism_env(determinism)
 
         results: List[Dict[str, Any]] = []
         errors: List[Dict[str, Any]] = []
@@ -183,6 +253,7 @@ def main() -> int:
 
             try:
                 train_result = _train_single_asset(asset_path, model_type, project_dir)
+                train_result["determinism"] = determinism
                 results.append(train_result)
 
                 if not train_result["success"]:
@@ -209,6 +280,26 @@ def main() -> int:
                 )
 
         status = "success" if not errors else "failed"
+        determinism_report = make_report(
+            "train_determinism",
+            profile,
+            {
+                "config": str(ctx["config_path"]),
+                "run_dir": str(run_dir),
+                "profile": profile,
+            },
+        )
+        finalize_report(
+            determinism_report,
+            status="success",
+            outputs={
+                "settings": determinism,
+                "applied_env": applied_env,
+            },
+            errors=[],
+        )
+        _write_json(run_dir / "reports" / "train_determinism_report.json", determinism_report)
+
         finalize_report(
             report,
             status=status,
@@ -216,6 +307,8 @@ def main() -> int:
                 "results": results,
                 "trained_count": len([r for r in results if r.get("success")]),
                 "failed_count": len(errors),
+                "determinism": determinism,
+                "train_determinism_report": str((run_dir / "reports" / "train_determinism_report.json").resolve()),
             },
             errors=errors,
         )

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shutil
 import traceback
@@ -78,6 +79,28 @@ def _copy_latest(run_dir: Path, out_root: Path, profile: str) -> Path:
     return latest_dir
 
 
+def _strict_thresholds() -> Dict[str, float]:
+    return {
+        "ssim_mean_min": 0.995,
+        "ssim_p05_min": 0.985,
+        "psnr_mean_min": 35.0,
+        "psnr_min_min": 30.0,
+        "edge_iou_mean_min": 0.97,
+    }
+
+
+def _thresholds_hash(thresholds: Dict[str, float]) -> str:
+    blob = json.dumps(thresholds, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _normalize_threshold_values(raw: Dict[str, Any]) -> Dict[str, float]:
+    out: Dict[str, float] = {}
+    for key in _strict_thresholds().keys():
+        out[key] = float(raw.get(key, 0.0))
+    return out
+
+
 def main() -> int:
     args = parse_args()
     run_dir = Path(args.run_dir)
@@ -114,7 +137,14 @@ def main() -> int:
         baseline_sync_path = run_dir / "reports" / "baseline_sync_report.json"
         gt_compare_path = run_dir / "reports" / "gt_compare_report.json"
         coord_validation_path = run_dir / "reports" / "coord_validation_report.json"
+        reference_setup_dump_report_path = run_dir / "reports" / "reference_setup_dump_report.json"
+        reference_setup_dump_path = run_dir / "reports" / "reference_setup_dump.json"
+        setup_diff_report_path = run_dir / "reports" / "setup_diff_report.json"
+        train_determinism_report_path = run_dir / "reports" / "train_determinism_report.json"
         gt_compare_report = _load_stage_report(gt_compare_path)
+        reference_setup_dump_report = _load_stage_report(reference_setup_dump_report_path)
+        setup_diff_report = _load_stage_report(setup_diff_report_path)
+        train_determinism_report = _load_stage_report(train_determinism_report_path)
 
         stage_reports: Dict[str, Dict[str, Any] | None] = {}
         failures: List[Dict[str, Any]] = []
@@ -126,6 +156,75 @@ def main() -> int:
                 continue
             if sr.get("status") != "success":
                 failures.append({"stage": stage, "message": "Stage failed", "errors": sr.get("errors", [])})
+
+        # strict threshold enforcement unless explicitly in debug mode
+        compare_cfg = (
+            cfg.get("ue", {}).get("ground_truth", {}).get("compare", {})
+            if isinstance(cfg.get("ue"), dict)
+            else {}
+        )
+        if not isinstance(compare_cfg, dict):
+            compare_cfg = {}
+        thresholds_raw = compare_cfg.get("thresholds", {}) if isinstance(compare_cfg.get("thresholds"), dict) else {}
+        thresholds = _normalize_threshold_values(thresholds_raw)
+        strict = _strict_thresholds()
+
+        debug_mode = bool(cfg.get("debug_mode", False))
+        if "debug_mode" in compare_cfg:
+            debug_mode = bool(compare_cfg.get("debug_mode", debug_mode))
+
+        if thresholds != strict and not debug_mode:
+            failures.append(
+                {
+                    "stage": "gt_compare",
+                    "message": "Ground-truth thresholds are not strict while debug_mode is false.",
+                    "configured_thresholds": thresholds,
+                    "required_strict_thresholds": strict,
+                    "configured_thresholds_hash": _thresholds_hash(thresholds),
+                    "strict_thresholds_hash": _thresholds_hash(strict),
+                }
+            )
+
+        strict_clone_cfg = (
+            cfg.get("reference_baseline", {}).get("strict_clone", {})
+            if isinstance(cfg.get("reference_baseline"), dict)
+            else {}
+        )
+        if not isinstance(strict_clone_cfg, dict):
+            strict_clone_cfg = {}
+        strict_clone_enabled = bool(strict_clone_cfg.get("enabled", False))
+        if strict_clone_enabled:
+            if reference_setup_dump_report is None:
+                failures.append(
+                    {
+                        "stage": "reference_setup_dump",
+                        "message": "Missing reference_setup_dump_report.json while strict_clone is enabled.",
+                    }
+                )
+            elif reference_setup_dump_report.get("status") != "success":
+                failures.append(
+                    {
+                        "stage": "reference_setup_dump",
+                        "message": "reference_setup_dump_report.json indicates failure.",
+                        "errors": reference_setup_dump_report.get("errors", []),
+                    }
+                )
+
+            if setup_diff_report is None:
+                failures.append(
+                    {
+                        "stage": "setup_diff",
+                        "message": "Missing setup_diff_report.json while strict_clone is enabled.",
+                    }
+                )
+            elif setup_diff_report.get("status") != "success":
+                failures.append(
+                    {
+                        "stage": "setup_diff",
+                        "message": "setup_diff_report.json indicates failure.",
+                        "errors": setup_diff_report.get("errors", []),
+                    }
+                )
 
         status = "success" if not failures else "failed"
 
@@ -162,9 +261,32 @@ def main() -> int:
                 "coord_validation_report": (
                     str(coord_validation_path.resolve()) if coord_validation_path.exists() else ""
                 ),
+                "reference_setup_dump_report": (
+                    str(reference_setup_dump_report_path.resolve()) if reference_setup_dump_report_path.exists() else ""
+                ),
+                "reference_setup_dump": (
+                    str(reference_setup_dump_path.resolve()) if reference_setup_dump_path.exists() else ""
+                ),
+                "setup_diff_report": (
+                    str(setup_diff_report_path.resolve()) if setup_diff_report_path.exists() else ""
+                ),
+                "train_determinism_report": (
+                    str(train_determinism_report_path.resolve()) if train_determinism_report_path.exists() else ""
+                ),
                 "gt_compare_status": (
                     str((gt_compare_report or {}).get("status", "missing"))
                     if gt_compare_path.exists()
+                    else "missing"
+                ),
+                "strict_thresholds_required": strict,
+                "configured_thresholds": thresholds,
+                "strict_thresholds_hash": _thresholds_hash(strict),
+                "configured_thresholds_hash": _thresholds_hash(thresholds),
+                "debug_mode": debug_mode,
+                "strict_clone_enabled": strict_clone_enabled,
+                "train_determinism_status": (
+                    str((train_determinism_report or {}).get("status", "missing"))
+                    if train_determinism_report_path.exists()
                     else "missing"
                 ),
             },

@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "debug_mode": false,
   "paths": {
     "project_root": ".",
     "uproject": "MLDeformerSample.uproject",
@@ -326,6 +327,15 @@
       "upper_costume",
       "lower_costume"
     ],
+    "training": {
+      "determinism": {
+        "enabled": true,
+        "seed": 3407,
+        "torch_deterministic": true,
+        "cudnn_deterministic": true,
+        "cudnn_benchmark": false
+      }
+    },
     "infer": {
       "map": "/Game/Maps/L_MLD_LearningCorridor",
       "test_animations": [
@@ -405,6 +415,10 @@
   "reference_baseline": {
     "enabled": true,
     "reference_uproject": "Refference/MLDeformerSample.uproject",
+    "strict_clone": {
+      "enabled": true,
+      "source": "refference_deformer_dump"
+    },
     "deformer_assets_override": {
       "flesh": {
         "training_input_anims": [

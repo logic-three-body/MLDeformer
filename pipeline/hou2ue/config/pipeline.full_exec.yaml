@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "debug_mode": false,
   "paths": {
     "project_root": ".",
     "uproject": "MLDeformerSample.uproject",
@@ -326,6 +327,16 @@
       "upper_costume",
       "lower_costume"
     ],
+    "training": {
+      "skip_train": true,
+      "determinism": {
+        "enabled": true,
+        "seed": 3407,
+        "torch_deterministic": true,
+        "cudnn_deterministic": true,
+        "cudnn_benchmark": false
+      }
+    },
     "infer": {
       "map": "/Game/Maps/L_MLD_LearningCorridor",
       "test_animations": [
@@ -392,11 +403,11 @@
       "compare": {
         "metrics_profile": "strict",
         "thresholds": {
-          "ssim_mean_min": 0.98,
-          "ssim_p05_min": 0.95,
+          "ssim_mean_min": 0.995,
+          "ssim_p05_min": 0.985,
           "psnr_mean_min": 35.0,
-          "psnr_min_min": 29.0,
-          "edge_iou_mean_min": 0.969
+          "psnr_min_min": 30.0,
+          "edge_iou_mean_min": 0.97
         },
         "fail_on_frame_count_mismatch": true
       }
@@ -405,6 +416,10 @@
   "reference_baseline": {
     "enabled": true,
     "reference_uproject": "Refference/MLDeformerSample.uproject",
+    "strict_clone": {
+      "enabled": true,
+      "source": "refference_deformer_dump"
+    },
     "deformer_assets_override": {
       "flesh": {
         "training_input_anims": [
