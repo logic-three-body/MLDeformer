@@ -59,12 +59,9 @@
 - `docs/06_appendix/README_Source_References_CN.md`
 
 ### 2.9 `docs/memory` (进度检查点)
-- `docs/memory/checkpoint-20260224_172438-gt-strict-closure.md`
-- `docs/memory/checkpoint-20260224_185205-strict-closure-impl-progress.md`
-- `docs/memory/checkpoint-20260225-skip-train-validated.md`
-- `docs/memory/checkpoint-20260225-unified-pipeline-validated.md`
-- `docs/memory/checkpoint-20260225-strict-reference-pipeline-pass.md`
-- `docs/memory/checkpoint-20260226-full-validation-and-optimizations.md`
+- `docs/memory/checkpoint-20260225-skip-train-validated.md`（归档：训练非确定性根因分析、ABC 坐标双重变换）
+- `docs/memory/checkpoint-20260225-unified-pipeline-validated.md`（归档：windowed SSIM 方法论、coord 自动检测）
+- `docs/memory/checkpoint-20260226-full-validation-and-optimizations.md`（当前权威：P1-P5 完整验证）
 
 ### 2.10 仓库根目录 `prototype`（docs 外的实现目录）
 - `prototype/README.md`
