@@ -233,23 +233,44 @@ description: Train and validate UE5 ML Deformer models (Neural Morph / Nearest N
 5. 当前影响：`strict_clone` 模式使用 Reference GeomCache（已正确导入），故此修复暂不影响当前流水线结果。
 6. 未来影响：若关闭 `skip_train` 并使用 pipeline 生成的 ABC 重新导入训练，此修复防止双重坐标变换导致的训练数据错误。
 
+## skip_train_shortcut
+1. 实现位置：`pipeline/hou2ue/run_all.ps1`（`$fullSkipTrain` 分支）。
+2. 适用条件：`-Stage full` 且 `skip_train=true`。
+3. 行为：自动跳过 `preflight`、`houdini`、`convert`、`ue_import` 四个阶段，仅执行 `ue_setup → train → infer → gt_compare → report → notify` 共 8 阶段。
+4. 报告处理：`build_report.py` 将跳过的阶段标记为 `skipped_skip_train`，不触发缺失报告失败。
+5. 时间收益：约 30%（smoke：23 min vs 32.8 min）。
+6. 验证 Run：`20260226_001602_smoke`，SSIM=0.9986，PASS。
+
+## color_gt_compare
+1. 实现位置：`pipeline/hou2ue/scripts/compare_groundtruth.py`。
+2. 新增函数：`_load_rgb()`、`_ssim_color()`（3 通道分别计算 windowed SSIM 取均值）、`_psnr_color()`（RGB joint PSNR）。
+3. 输出指标：
+   - 逐帧：`color_ssim`、`color_psnr`
+   - 汇总：`color_ssim_mean`、`color_ssim_p05`、`color_psnr_mean`、`color_psnr_min`
+   - 窗口：`color_ssim_mean`、`color_psnr_mean`
+4. 定位：补充性指标，不影响 pass/fail 判定（不纳入阈值门控）。
+5. 验证 Run：`20260226_001602_smoke`，color_SSIM=0.9984，color_PSNR=59.44。
+
 ## latest_validated_runs
-- **最新 skip_train 通过 run**：`pipeline/hou2ue/workspace/runs/20260225_194534_smoke`。
-  - 使用配置：`pipeline/hou2ue/config/pipeline.full_exec.yaml`（`skip_train: true`，`training_data_source: reference`）。
-  - profile: `smoke`。
-  - 全阶段状态：all 11 stages = success。
-  - Demo 采集：6 jobs (2 routes × 3 anims)，720 frames。
-  - GT 指标：`ssim_mean=0.9955`，`ssim_p05=0.9953`，`psnr_mean=53.36`，`psnr_min=52.21`，`edge_iou=0.987`。
-  - 关键修复：demo 路线回退到 DemoRoom，BOM 编码修复，build_report.py 守卫，阈值对齐。
-- **前次 pipeline 通过 run**：`pipeline/hou2ue/workspace/runs/20260225_170711_smoke`。
-  - 使用配置：`pipeline/hou2ue/config/pipeline.full_exec.yaml`（`training_data_source: pipeline`，`skip_train: false`）。
-  - GT 指标（windowed SSIM）：`ssim_mean=0.776`，`ssim_p05=0.697`，`psnr_mean=18.62`，`psnr_min=15.29`，`edge_iou=0.665`。
-  - Coord transforms：flesh=Z-up identity, NNM upper=Y-up→Z-up swap, NNM lower=Z-up identity。
-- **前次 skip_train run（参考）**：`pipeline/hou2ue/workspace/runs/20260225_122128_smoke`。
-  - GT 指标（global SSIM）：`ssim_mean=0.9997`，`ssim_p05=0.9996`，`psnr_mean=53.61`，`psnr_min=52.28`，`edge_iou=0.9875`。
-- **前次 strict 失败 run（重训）**：`pipeline/hou2ue/workspace/runs/20260224_230628_smoke`。
-  - GT 指标：`ssim_mean=0.9813`，`ssim_p05=0.9523`，`psnr_mean=36.01`，`psnr_min=29.38`，`edge_iou=0.9697`。
-  - 失败原因：跨环境训练非确定性。
+
+### 验证矩阵（v0.3.0-validated）
+| Run ID | Profile | 类型 | SSIM | PSNR | EdgeIoU | Color SSIM | 状态 |
+|---|---|---|---|---|---|---|---|
+| `20260225_215842_full` | full (46 poses) | 完整链路 | 0.9955 | 53.36 | 0.9874 | — | ✅ PASS |
+| `20260225_223734_smoke` | smoke | 稳定性 1/3 | 0.9969 | 55.86 | 0.9891 | — | ✅ PASS |
+| `20260225_230707_smoke` | smoke | 稳定性 2/3 | 0.9958 | 54.14 | 0.9877 | — | ✅ PASS |
+| `20260225_234041_smoke` | smoke | 稳定性 3/3 | 0.9975 | 57.25 | 0.9906 | — | ✅ PASS |
+| `20260226_001602_smoke` | smoke | skip_train 快捷 | 0.9986 | 59.53 | 0.9962 | 0.9984 | ✅ PASS |
+
+- 所有 run 使用配置：`pipeline/hou2ue/config/pipeline.full_exec.yaml`（`skip_train: true`，`training_data_source: reference`，`metrics_profile: strict`）。
+- Strict 阈值：`ssim_mean≥0.995`，`ssim_p05≥0.985`，`psnr_mean≥35.0`，`psnr_min≥30.0`，`edge_iou_mean≥0.97`。
+- 5/5 全部通过，最低 SSIM=0.9955（full profile），最高 SSIM=0.9986（shortcut run）。
+
+### 历史参考 runs
+- **前次 pipeline 通过 run**：`20260225_170711_smoke`（`training_data_source: pipeline`，`skip_train: false`）。
+  - GT 指标（windowed SSIM）：`ssim_mean=0.776`，`psnr_mean=18.62`，`edge_iou=0.665`（pipeline 宽松阈值 PASS）。
+- **前次 strict 失败 run（重训）**：`20260224_230628_smoke`。
+  - `ssim_mean=0.9813`，`psnr_mean=36.01`。失败原因：跨环境训练非确定性。
 - 非阻断告警：启动日志可能出现贴图/旧 GeomCache 缺失告警与 revision control checkout 提示，不影响本流水线报告状态。
 
 ## current_blockers
