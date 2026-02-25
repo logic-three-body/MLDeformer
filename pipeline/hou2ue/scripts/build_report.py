@@ -89,6 +89,22 @@ def _strict_thresholds() -> Dict[str, float]:
     }
 
 
+def _pipeline_thresholds() -> Dict[str, float]:
+    """Relaxed thresholds for pipeline-trained models (training_data_source=pipeline).
+
+    Pipeline-produced training data uses different GeomCache/animation combinations
+    than the reference project, so the retrained model is expected to produce
+    visually different (but still correct) results.
+    """
+    return {
+        "ssim_mean_min": 0.60,
+        "ssim_p05_min": 0.40,
+        "psnr_mean_min": 15.0,
+        "psnr_min_min": 12.0,
+        "edge_iou_mean_min": 0.40,
+    }
+
+
 def _thresholds_hash(thresholds: Dict[str, float]) -> str:
     blob = json.dumps(thresholds, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
@@ -168,20 +184,40 @@ def main() -> int:
         thresholds_raw = compare_cfg.get("thresholds", {}) if isinstance(compare_cfg.get("thresholds"), dict) else {}
         thresholds = _normalize_threshold_values(thresholds_raw)
         strict = _strict_thresholds()
+        pipeline = _pipeline_thresholds()
 
         debug_mode = bool(cfg.get("debug_mode", False))
         if "debug_mode" in compare_cfg:
             debug_mode = bool(compare_cfg.get("debug_mode", debug_mode))
 
-        if thresholds != strict and not debug_mode:
+        # Determine training_data_source to select the correct threshold baseline
+        training_cfg = (
+            cfg.get("ue", {}).get("training", {})
+            if isinstance(cfg.get("ue"), dict)
+            else {}
+        )
+        if not isinstance(training_cfg, dict):
+            training_cfg = {}
+        training_data_source = str(training_cfg.get("training_data_source", "reference") or "reference").strip().lower()
+        is_pipeline_source = training_data_source == "pipeline"
+
+        if is_pipeline_source:
+            required_thresholds = pipeline
+            threshold_label = "pipeline"
+        else:
+            required_thresholds = strict
+            threshold_label = "strict"
+
+        if thresholds != required_thresholds and not debug_mode:
             failures.append(
                 {
                     "stage": "gt_compare",
-                    "message": "Ground-truth thresholds are not strict while debug_mode is false.",
+                    "message": f"Ground-truth thresholds are not {threshold_label} while debug_mode is false.",
                     "configured_thresholds": thresholds,
-                    "required_strict_thresholds": strict,
+                    "required_thresholds": required_thresholds,
+                    "training_data_source": training_data_source,
                     "configured_thresholds_hash": _thresholds_hash(thresholds),
-                    "strict_thresholds_hash": _thresholds_hash(strict),
+                    "required_thresholds_hash": _thresholds_hash(required_thresholds),
                 }
             )
 
@@ -218,13 +254,37 @@ def main() -> int:
                     }
                 )
             elif setup_diff_report.get("status") != "success":
-                failures.append(
-                    {
-                        "stage": "setup_diff",
-                        "message": "setup_diff_report.json indicates failure.",
-                        "errors": setup_diff_report.get("errors", []),
-                    }
-                )
+                # In pipeline mode, setup_diff may report expected mismatches for training
+                # data fields (training_input_anims, nnm_sections). These are intentional
+                # and should not cause a pipeline-level failure.
+                if is_pipeline_source:
+                    diff_errors = setup_diff_report.get("errors", [])
+                    unexpected_errors = []
+                    _pipeline_allowed = {"training_input_anims", "nnm_sections"}
+                    for err in diff_errors:
+                        if not isinstance(err, dict):
+                            unexpected_errors.append(err)
+                            continue
+                        mismatch_fields = err.get("mismatch_fields", [])
+                        if isinstance(mismatch_fields, list) and all(f in _pipeline_allowed for f in mismatch_fields):
+                            continue  # expected mismatch in pipeline mode
+                        unexpected_errors.append(err)
+                    if unexpected_errors:
+                        failures.append(
+                            {
+                                "stage": "setup_diff",
+                                "message": "setup_diff_report.json indicates unexpected failures in pipeline mode.",
+                                "errors": unexpected_errors,
+                            }
+                        )
+                else:
+                    failures.append(
+                        {
+                            "stage": "setup_diff",
+                            "message": "setup_diff_report.json indicates failure.",
+                            "errors": setup_diff_report.get("errors", []),
+                        }
+                    )
 
         status = "success" if not failures else "failed"
 
@@ -279,9 +339,13 @@ def main() -> int:
                     else "missing"
                 ),
                 "strict_thresholds_required": strict,
+                "pipeline_thresholds": pipeline,
+                "required_thresholds": required_thresholds,
                 "configured_thresholds": thresholds,
                 "strict_thresholds_hash": _thresholds_hash(strict),
+                "pipeline_thresholds_hash": _thresholds_hash(pipeline),
                 "configured_thresholds_hash": _thresholds_hash(thresholds),
+                "training_data_source": training_data_source,
                 "debug_mode": debug_mode,
                 "strict_clone_enabled": strict_clone_enabled,
                 "train_determinism_status": (

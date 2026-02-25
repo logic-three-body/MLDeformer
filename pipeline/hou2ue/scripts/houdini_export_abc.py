@@ -122,6 +122,7 @@ def _apply_coord_transform_to_abc(
     frame_end: int,
     coord_cfg: Dict[str, Any],
     track_sop_name: str = "",
+    detect_up_axis: bool = False,
 ) -> Dict[str, Any]:
     mode = str(coord_cfg.get("mode", "explicit")).strip().lower()
     if mode != "explicit":
@@ -153,6 +154,7 @@ def _apply_coord_transform_to_abc(
             f"scale_factor = {float(scale)}",
             f"matrix_3x3 = {json.dumps(matrix)}",
             f"translation = {json.dumps(translation)}",
+            f"detect_up_axis = {bool(detect_up_axis)}",
             "if frame_end < frame_start:",
             "    frame_end = frame_start",
             "hou.hipFile.clear(suppress_save_prompt=True)",
@@ -162,6 +164,27 @@ def _apply_coord_transform_to_abc(
             "    child.destroy()",
             "file_sop = geo.createNode('file', 'in_abc')",
             "file_sop.parm('file').set(input_abc)",
+            "",
+            "# Auto-detect up axis for FBX-sourced data: check bbox center at frame_start.",
+            "# If Z-center > 50 the data is Z-up (UE native) -> use identity matrix.",
+            "# If Y-center > 50 the data is Y-up (Maya/FBX default) -> keep the Y<->Z swap.",
+            "hou.setFrame(frame_start)",
+            "g_detect = file_sop.geometry()",
+            "bb_detect = g_detect.boundingBox()",
+            "center_y = (bb_detect.minvec()[1] + bb_detect.maxvec()[1]) * 0.5",
+            "center_z = (bb_detect.minvec()[2] + bb_detect.maxvec()[2]) * 0.5",
+            "detected_up = 'unknown'",
+            "if detect_up_axis:",
+            "    if abs(center_z) > abs(center_y) and abs(center_z) > 30.0:",
+            "        detected_up = 'z_up'",
+            "        matrix_3x3 = [[1,0,0],[0,1,0],[0,0,1]]  # identity - already Z-up for UE",
+            "    elif abs(center_y) > abs(center_z) and abs(center_y) > 30.0:",
+            "        detected_up = 'y_up'",
+            "        # keep configured matrix (Y<->Z swap)",
+            "    else:",
+            "        detected_up = 'ambiguous'",
+            "        # keep configured matrix as fallback",
+            "",
             "wrangle = geo.createNode('attribwrangle', 'coord_xform')",
             "wrangle.setInput(0, file_sop)",
             "wrangle.parm('class').set(2)",
@@ -198,6 +221,10 @@ def _apply_coord_transform_to_abc(
             "    'scale_factor': float(scale_factor),",
             "    'matrix_3x3': matrix_3x3,",
             "    'translation_offset': [float(v) for v in translation],",
+            "    'detected_up': str(detected_up),",
+            "    'detect_up_axis': bool(detect_up_axis),",
+            "    'center_y': float(center_y),",
+            "    'center_z': float(center_z),",
             "    'bbox_input_min': [float(bb_in.minvec()[0]), float(bb_in.minvec()[1]), float(bb_in.minvec()[2])],",
             "    'bbox_input_max': [float(bb_in.maxvec()[0]), float(bb_in.maxvec()[1]), float(bb_in.maxvec()[2])],",
             "    'bbox_output_min': [float(bb_out.minvec()[0]), float(bb_out.minvec()[1]), float(bb_out.minvec()[2])],",
@@ -511,13 +538,19 @@ def _export_nnm_geom_caches(
             frame_start=frame_start,
             frame_end=frame_end,
         )
+        # FBX data imported into Houdini retains its original units (cm).
+        # The coord transform's ×100 scale assumes meters→cm and would
+        # over-scale FBX data.  Use scale_factor=1.0 for FBX sources.
+        fbx_coord_cfg = dict(coord_cfg)
+        fbx_coord_cfg["scale_factor"] = 1.0
         coord_entry = _apply_coord_transform_to_abc(
             hython=hython,
             input_abc=output_abc,
             frame_start=frame_start,
             frame_end=frame_end,
-            coord_cfg=coord_cfg,
+            coord_cfg=fbx_coord_cfg,
             track_sop_name=preferred_geo_obj,
+            detect_up_axis=True,
         )
         exports[key]["destination_asset"] = dst_asset
         exports[key]["coord_validation"] = coord_entry
@@ -658,8 +691,6 @@ def main() -> int:
             source_fbx = Path(flesh_source["source_fbx"])
             frame_start = int(flesh_source["frame_start"])
             frame_end = int(flesh_source["frame_end"])
-            if expected > 0:
-                frame_end = frame_start + expected - 1
 
             export_log = _run_hython_fbx_to_abc_export(
                 hython=hython,
@@ -721,13 +752,23 @@ def main() -> int:
             flesh_frame_start = 1
             flesh_frame_end = max(1, tissue_count_for_report)
 
+        # FBX-based flesh exports retain centimeter units from FBX import;
+        # only apply Y↔Z swap (scale_factor=1.0), not the full m→cm scaling.
+        flesh_coord_cfg = coord_cfg
+        flesh_detect_up = False
+        if flesh_source_mode == "fbx_anim":
+            flesh_coord_cfg = dict(coord_cfg)
+            flesh_coord_cfg["scale_factor"] = 1.0
+            flesh_detect_up = True
+
         coord_entries["flesh"] = _apply_coord_transform_to_abc(
             hython=hython,
             input_abc=stitched_abc,
             frame_start=flesh_frame_start,
             frame_end=flesh_frame_end,
-            coord_cfg=coord_cfg,
+            coord_cfg=flesh_coord_cfg,
             track_sop_name=str(flesh_source.get("track_sop_name", "body_mesh") or "body_mesh"),
+            detect_up_axis=flesh_detect_up,
         )
 
         pose_map_csv = export_dir / "pose_frame_map.csv"

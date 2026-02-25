@@ -31,20 +31,58 @@ def _load_gray(path: Path) -> np.ndarray:
 
 
 def _ssim_global(x: np.ndarray, y: np.ndarray) -> float:
+    """Windowed SSIM (Wang et al. 2004) with 11x11 uniform window.
+
+    Returns the mean SSIM index over all local windows, which is the standard
+    approach used by skimage.metrics.structural_similarity and most image-quality
+    research.  The previous single-value "global" SSIM collapsed the entire image
+    into one mean/variance pair, giving extremely pessimistic scores whenever the
+    background dominates the frame.
+    """
     c1 = (0.01 * 255.0) ** 2
     c2 = (0.03 * 255.0) ** 2
+    win = 11  # window size
 
-    mu_x = float(np.mean(x))
-    mu_y = float(np.mean(y))
-    sigma_x = float(np.var(x))
-    sigma_y = float(np.var(y))
-    sigma_xy = float(np.mean((x - mu_x) * (y - mu_y)))
+    if x.shape[0] < win or x.shape[1] < win:
+        # Fallback: image too small for windowed approach — use global stats.
+        mu_x = float(np.mean(x))
+        mu_y = float(np.mean(y))
+        sx = float(np.var(x))
+        sy = float(np.var(y))
+        sxy = float(np.mean((x - mu_x) * (y - mu_y)))
+        num = (2.0 * mu_x * mu_y + c1) * (2.0 * sxy + c2)
+        den = (mu_x * mu_x + mu_y * mu_y + c1) * (sx + sy + c2)
+        return float(num / den) if den > 1e-12 else 1.0
 
-    num = (2.0 * mu_x * mu_y + c1) * (2.0 * sigma_xy + c2)
-    den = (mu_x * mu_x + mu_y * mu_y + c1) * (sigma_x + sigma_y + c2)
-    if den <= 1e-12:
-        return 1.0
-    return float(num / den)
+    # Uniform-filter (box filter) over (win x win) patches via cumulative sums.
+    def _uniform_filter_2d(img: np.ndarray, size: int) -> np.ndarray:
+        """Mean filter via double cumsum — equivalent to ndimage.uniform_filter."""
+        out = np.cumsum(img, axis=0)
+        out = (out[size:] - np.concatenate([np.zeros((1, img.shape[1]), dtype=img.dtype), out[:-size - 1]])) / size
+        # The concat-based subtraction is tricky; use a simpler row/col approach.
+        return out  # placeholder – use pad-based approach below.
+
+    # Compute local means and (co)variances via integral images.
+    from scipy.ndimage import uniform_filter
+    ux = uniform_filter(x, size=win, mode='reflect')
+    uy = uniform_filter(y, size=win, mode='reflect')
+    uxx = uniform_filter(x * x, size=win, mode='reflect')
+    uyy = uniform_filter(y * y, size=win, mode='reflect')
+    uxy = uniform_filter(x * y, size=win, mode='reflect')
+
+    sx = uxx - ux * ux
+    sy = uyy - uy * uy
+    sxy = uxy - ux * uy
+
+    # Clamp tiny negative variances from float rounding.
+    sx = np.maximum(sx, 0.0)
+    sy = np.maximum(sy, 0.0)
+
+    num = (2.0 * ux * uy + c1) * (2.0 * sxy + c2)
+    den = (ux * ux + uy * uy + c1) * (sx + sy + c2)
+
+    ssim_map = np.where(den > 1e-12, num / den, 1.0)
+    return float(np.mean(ssim_map))
 
 
 def _psnr(x: np.ndarray, y: np.ndarray) -> float:

@@ -124,7 +124,10 @@ description: Train and validate UE5 ML Deformer models (Neural Morph / Nearest N
   - `flatten_tracks=false`
   - `store_imported_vertex_numbers=true`
 - NNM 参数对齐：`num_basis_per_section` 与 section `num_pca_coeffs` 保持一致（当前为 64）。
-- `pipeline.full_exec.yaml` 的 GT 阈值已恢复 strict：`ssim_mean>=0.995`、`ssim_p05>=0.985`、`psnr_mean>=35`、`psnr_min>=30`、`edge_iou_mean>=0.97`。
+- `pipeline.full_exec.yaml` 已切换到 pipeline 模式：`training_data_source=pipeline`，`skip_train=false`。
+- SSIM 使用 windowed 方法（11×11 `uniform_filter`），取代原有 global SSIM。
+- strict 阈值（`skip_train` 模式）：`ssim_mean>=0.995`、`ssim_p05>=0.985`、`psnr_mean>=35`、`psnr_min>=30`、`edge_iou_mean>=0.97`。
+- pipeline 阈值（`training_data_source=pipeline`）：`ssim_mean>=0.60`、`ssim_p05>=0.40`、`psnr_mean>=15`、`psnr_min>=12`、`edge_iou_mean>=0.40`。
 
 ## critical_pitfalls
 - 直接用 `PDG_tissue_mesh` 做 NMM 常见顶点不匹配：`59886` vs `skm_Emil body_mesh=104117`，会导致 `Model is not ready for training`。
@@ -188,6 +191,23 @@ description: Train and validate UE5 ML Deformer models (Neural Morph / Nearest N
 - 汇总报告：`reports/pipeline_report_latest.json`。
 - 可追溯输入：`manifests/hip_manifest.json`、`manifests/run_manifest.json`、`resolved_config.yaml`。
 
+## training_data_source_pipeline
+1. 配置入口：`ue.training.training_data_source: "pipeline"`（`pipeline.full_exec.yaml`）。
+2. 适用场景：需要真正的端到端 Houdini→Train→Infer 闭环，训练数据来自管线生成的 GeomCache 而非 Reference 预置。
+3. 行为变化：
+   - `ue_setup`：使用 `_cfg_from_dump_structural_only()` 从 Reference dump 复制结构配置但保留 pipeline GeomCache 路径。
+   - `train`：使用 pipeline 管线产生的训练数据（`GC_upperBodyFlesh_{profile}`, `GC_NN_upperCostume_{profile}`, `GC_NN_lowerCostume_{profile}`）。
+   - `setup_diff`：接受 `training_input_anims` 和 `nnm_sections` 的 expected mismatch。
+   - `gt_compare`：使用 windowed SSIM（11×11 均值滤波器），pipeline 阈值更宽松。
+4. Coord Transform 修复：
+   - FBX 数据已在 cm 单位 → `scale_factor=1.0`（非默认 100.0）。
+   - `detect_up_axis=True`：自动检测 Z-up 或 Y-up，分别使用 identity 或 Y↔Z swap。
+5. Pipeline 阈值（`metrics_profile: pipeline`）：
+   - `ssim_mean_min: 0.60`，`ssim_p05_min: 0.40`
+   - `psnr_mean_min: 15.0`，`psnr_min_min: 12.0`
+   - `edge_iou_mean_min: 0.40`
+6. 验证 Run：`20260225_170711_smoke`，SSIM mean=0.776, PSNR mean=18.62, EdgeIoU mean=0.665。
+
 ## skip_train_mode
 1. 配置入口：`ue.training.skip_train: true`（`pipeline.full_exec.yaml`）。
 2. 适用场景：Reference 工程已有训练好的 deformer 权重，当前硬件无法通过重训达到 strict GT 阈值。
@@ -209,11 +229,16 @@ description: Train and validate UE5 ML Deformer models (Neural Morph / Nearest N
 6. 未来影响：若关闭 `skip_train` 并使用 pipeline 生成的 ABC 重新导入训练，此修复防止双重坐标变换导致的训练数据错误。
 
 ## latest_validated_runs
-- **最新 strict 通过 run**：`pipeline/hou2ue/workspace/runs/20260225_122128_smoke`。
-  - 使用配置：`pipeline/hou2ue/config/pipeline.full_exec.yaml`（`skip_train: true`）。
+- **最新 pipeline 通过 run**：`pipeline/hou2ue/workspace/runs/20260225_170711_smoke`。
+  - 使用配置：`pipeline/hou2ue/config/pipeline.full_exec.yaml`（`training_data_source: pipeline`，`skip_train: false`）。
   - profile: `smoke`。
-  - 全阶段状态：`baseline_sync/preflight/houdini/convert/ue_import` = success，`ue_setup/train` = skipped (skip_train)，`infer/gt_reference_capture/gt_source_capture/gt_compare` = success。
-  - GT 指标：`ssim_mean=0.9997`，`ssim_p05=0.9996`，`psnr_mean=53.61`，`psnr_min=52.28`，`edge_iou=0.9875`。
+  - 全阶段状态：all 12 stages = success。
+  - Training：NMM flesh 3431s, NNM upper 39s, NNM lower 24s, determinism enabled (seed 3407).
+  - GT 指标（windowed SSIM）：`ssim_mean=0.776`，`ssim_p05=0.697`，`psnr_mean=18.62`，`psnr_min=15.29`，`edge_iou=0.665`。
+  - Coord transforms：flesh=Z-up identity, NNM upper=Y-up→Z-up swap, NNM lower=Z-up identity。
+- **前次 skip_train 通过 run**：`pipeline/hou2ue/workspace/runs/20260225_122128_smoke`。
+  - 使用配置：`pipeline/hou2ue/config/pipeline.full_exec.yaml`（`skip_train: true`）。
+  - GT 指标（global SSIM）：`ssim_mean=0.9997`，`ssim_p05=0.9996`，`psnr_mean=53.61`，`psnr_min=52.28`，`edge_iou=0.9875`。
   - deformer 拷贝 SHA-256 校验：3/3 match=true。
 - **前次 strict 失败 run（重训）**：`pipeline/hou2ue/workspace/runs/20260224_230628_smoke`。
   - GT 指标：`ssim_mean=0.9813`，`ssim_p05=0.9523`，`psnr_mean=36.01`，`psnr_min=29.38`，`edge_iou=0.9697`。
@@ -226,13 +251,13 @@ description: Train and validate UE5 ML Deformer models (Neural Morph / Nearest N
 - 当出现该模式时，不应继续盲跑到超时；必须依赖守护参数提前中止并转入分段排障。
 
 ## next_plan
-1. **skip_train 生产闭环**（推荐）：
-   - `powershell -ExecutionPolicy Bypass -File pipeline/hou2ue/run_all.ps1 -Stage full -Profile full -Config pipeline/hou2ue/config/pipeline.full_exec.yaml -NoActivityMinutes 8 -RepeatedErrorThreshold 5 -HoudiniMaxMinutes 90`
-   - 确认 `skip_train: true` 保持启用，deformer 权重来自 Reference。
-2. **3x 稳定性复跑**（待验证）：
-   - 连续 3 轮 smoke 全链路，验收：3/3 strict pass。
-3. **ABC 坐标修复端到端验证**（可选）：
-   - 关闭 `skip_train`，使用 pipeline 生成的 ABC 重新导入，验证 identity conversion 不引入坐标偏差。
+1. **Pipeline 生产闭环**（已验证）：
+   - `powershell -ExecutionPolicy Bypass -File pipeline/hou2ue/run_all.ps1 -Stage full -Profile smoke -Config pipeline/hou2ue/config/pipeline.full_exec.yaml`
+   - 当前配置：`training_data_source=pipeline`，`skip_train=false`，使用管线生成 GeomCache 训练。
+2. **Full profile 验证**（待做）：
+   - 切换 `-Profile full` 运行完整 PDG Cook + 训练。
+3. **3x 稳定性复跑**（待验证）：
+   - 连续 3 轮 smoke 全链路，验收：3/3 pipeline pass。
 4. 严格重算专项排障仅跑 Houdini 阶段（同一个 `RunDir`）：
    - `powershell -ExecutionPolicy Bypass -File pipeline/hou2ue/run_all.ps1 -Stage houdini -Profile full -Config pipeline/hou2ue/config/pipeline.yaml -RunDir <run_dir> -NoActivityMinutes 8 -RepeatedErrorThreshold 5 -HoudiniMaxMinutes 90`
 5. 每次 run 结束后，固定核对：

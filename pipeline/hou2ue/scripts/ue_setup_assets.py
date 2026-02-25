@@ -171,7 +171,31 @@ def _cfg_from_dump(base_cfg: Dict[str, Any], dump_entry: Dict[str, Any]) -> Dict
     return cfg
 
 
-def _compute_setup_diff(reference_row: Dict[str, Any], current_row: Dict[str, Any]) -> Dict[str, Any]:
+def _cfg_from_dump_structural_only(base_cfg: Dict[str, Any], dump_entry: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply only structural fields from reference dump, keeping training data paths from base config.
+
+    This is used when ``training_data_source == "pipeline"`` so that structural
+    properties (model type, skeletal mesh, deformer graph, test anim, hyper-
+    parameters) match the reference, while training_input_anims and
+    nnm_section_overrides stay from the pipeline's own config (with {profile}
+    templates pointing to pipeline-produced GeomCaches).
+    """
+    cfg = dict(base_cfg)
+    cfg["model_type"] = str(dump_entry.get("model_type", cfg.get("model_type", "")))
+    cfg["skeletal_mesh"] = str(dump_entry.get("skeletal_mesh", cfg.get("skeletal_mesh", "")))
+    cfg["deformer_graph"] = str(dump_entry.get("deformer_graph", cfg.get("deformer_graph", "")))
+    cfg["test_anim_sequence"] = str(dump_entry.get("test_anim", cfg.get("test_anim_sequence", "")))
+    # training_input_anims  — intentionally kept from base_cfg (pipeline paths)
+    # nnm_section_overrides — intentionally kept from base_cfg (pipeline paths)
+    cfg["model_overrides"] = _safe_json_load(str(dump_entry.get("model_overrides_json", "{}")), {})
+    return cfg
+
+
+def _compute_setup_diff(
+    reference_row: Dict[str, Any],
+    current_row: Dict[str, Any],
+    allowed_mismatch_fields: List[str] | None = None,
+) -> Dict[str, Any]:
     checks = {
         "model_type": (reference_row.get("model_type", ""), current_row.get("model_type", "")),
         "skeletal_mesh": (reference_row.get("skeletal_mesh", ""), current_row.get("skeletal_mesh", "")),
@@ -193,17 +217,24 @@ def _compute_setup_diff(reference_row: Dict[str, Any], current_row: Dict[str, An
 
     field_results: Dict[str, Dict[str, Any]] = {}
     mismatch_fields: List[str] = []
+    expected_mismatch_fields: List[str] = []
+    _allowed = set(allowed_mismatch_fields or [])
     for field_name, (lhs, rhs) in checks.items():
         same = lhs == rhs
         field_results[field_name] = {"same": same}
         if not same:
-            mismatch_fields.append(field_name)
+            if field_name in _allowed:
+                expected_mismatch_fields.append(field_name)
+                field_results[field_name]["allowed_mismatch"] = True
+            else:
+                mismatch_fields.append(field_name)
             field_results[field_name]["expected"] = lhs
             field_results[field_name]["actual"] = rhs
 
     return {
         "all_match": len(mismatch_fields) == 0,
         "mismatch_fields": mismatch_fields,
+        "expected_mismatch_fields": expected_mismatch_fields,
         "fields": field_results,
     }
 
@@ -305,6 +336,7 @@ def _build_setup_request(
     profile: str,
     run_dir: Path,
     key: str,
+    training_data_source: str = "reference",
 ):
     req = _setup_request_class()()
 
@@ -316,7 +348,13 @@ def _build_setup_request(
     raw_overrides = cfg.get("model_overrides", {})
     model_overrides = dict(raw_overrides) if isinstance(raw_overrides, dict) else {}
 
-    inferred_range = _infer_frame_range_from_pose_map(run_dir, profile) if key == "flesh" else None
+    # When training_data_source=="pipeline", the GeomCache frame count may differ
+    # from the Houdini pose_map sample count (FBX exports use their own frame_end).
+    # Skip pose_map inference and let the training use the full GeomCache range.
+    if key == "flesh" and training_data_source != "pipeline":
+        inferred_range = _infer_frame_range_from_pose_map(run_dir, profile)
+    else:
+        inferred_range = None
     raw_inputs = cfg.get("training_input_anims", [])
     if not isinstance(raw_inputs, list):
         raw_inputs = []
@@ -346,13 +384,25 @@ def _configure_single_asset(
     run_dir: Path,
     root_cfg: Dict[str, Any],
     strict_clone_entry: Dict[str, Any] | None = None,
+    training_data_source: str = "reference",
 ) -> Dict[str, Any]:
     applied_source = "reference_override"
+    is_pipeline_source = training_data_source == "pipeline"
     if strict_clone_entry is not None:
-        cfg = _cfg_from_dump(cfg, strict_clone_entry)
-        applied_source = "strict_clone_dump"
+        if is_pipeline_source:
+            cfg = _cfg_from_dump_structural_only(cfg, strict_clone_entry)
+            applied_source = "strict_clone_structural_only"
+        else:
+            cfg = _cfg_from_dump(cfg, strict_clone_entry)
+            applied_source = "strict_clone_dump"
     else:
-        cfg = _apply_reference_override(root_cfg, name, cfg)
+        if is_pipeline_source:
+            # Pipeline mode: use base config directly (training inputs already
+            # point to pipeline-produced GeomCaches via {profile} templates).
+            applied_source = "pipeline_base_config"
+        else:
+            cfg = _apply_reference_override(root_cfg, name, cfg)
+            applied_source = "reference_override"
 
     asset_path = str(require_nested(cfg, ("asset_path",)))
     model_type = str(require_nested(cfg, ("model_type",)))
@@ -366,7 +416,7 @@ def _configure_single_asset(
     if fn is None:
         raise RuntimeError("setup_deformer_asset missing in MLDTrainAutomationLibrary")
 
-    req, resolved_inputs = _build_setup_request(cfg, profile, run_dir, name)
+    req, resolved_inputs = _build_setup_request(cfg, profile, run_dir, name, training_data_source=training_data_source)
     result = fn(req)
 
     success = bool(_get_field_safe(result, "success", False))
@@ -412,6 +462,15 @@ def main() -> int:
         strict_clone_enabled = bool(strict_clone_cfg.get("enabled", False))
         strict_clone_source = str(strict_clone_cfg.get("source", "") or "").strip().lower()
 
+        training_cfg = cfg.get("ue", {}).get("training", {}) if isinstance(cfg.get("ue"), dict) else {}
+        if not isinstance(training_cfg, dict):
+            training_cfg = {}
+        training_data_source = str(training_cfg.get("training_data_source", "reference") or "reference").strip().lower()
+        is_pipeline_source = training_data_source == "pipeline"
+        # When training uses pipeline-produced data, training_input_anims and
+        # nnm_sections may legitimately differ from the reference dump.
+        _pipeline_allowed_mismatch = ["training_input_anims", "nnm_sections"] if is_pipeline_source else []
+
         reference_dump: Dict[str, Any] | None = None
         if strict_clone_enabled:
             if strict_clone_source and strict_clone_source != "refference_deformer_dump":
@@ -437,7 +496,7 @@ def main() -> int:
                         asset_path=str(require_nested(item_cfg, ("asset_path",))),
                     )
 
-                res = _configure_single_asset(key, item_cfg, profile, run_dir, cfg, strict_clone_entry=strict_clone_entry)
+                res = _configure_single_asset(key, item_cfg, profile, run_dir, cfg, strict_clone_entry=strict_clone_entry, training_data_source=training_data_source)
                 results.append(res)
                 if res["status"] != "success":
                     errors.append({"message": f"Asset setup failed: {key}", "detail": res.get("message", "")})
@@ -445,7 +504,7 @@ def main() -> int:
 
                 if strict_clone_enabled and strict_clone_entry is not None:
                     current_dump = _call_dump(str(res.get("asset_path", "")))
-                    diff = _compute_setup_diff(strict_clone_entry, current_dump)
+                    diff = _compute_setup_diff(strict_clone_entry, current_dump, allowed_mismatch_fields=_pipeline_allowed_mismatch)
                     setup_diffs.append(
                         {
                             "key": key,
@@ -508,6 +567,7 @@ def main() -> int:
             outputs={
                 "strict_clone_enabled": strict_clone_enabled,
                 "strict_clone_source": strict_clone_source,
+                "training_data_source": training_data_source,
                 "reference_setup_dump": (
                     str(reference_dump.get("path", "")) if isinstance(reference_dump, dict) else ""
                 ),
@@ -525,6 +585,7 @@ def main() -> int:
                 "asset_results": results,
                 "success_count": len([r for r in results if r.get("status") == "success"]),
                 "failure_count": len(errors),
+                "training_data_source": training_data_source,
                 "strict_clone_enabled": strict_clone_enabled,
                 "strict_clone_source": strict_clone_source,
                 "reference_setup_dump": (
