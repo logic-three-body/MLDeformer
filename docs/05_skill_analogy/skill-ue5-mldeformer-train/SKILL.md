@@ -133,6 +133,9 @@ description: Train and validate UE5 ML Deformer models (Neural Morph / Nearest N
 - 直接用 `PDG_tissue_mesh` 做 NMM 常见顶点不匹配：`59886` vs `skm_Emil body_mesh=104117`，会导致 `Model is not ready for training`。
 - `UnrealEditor` 偶发返回码 `3` 不等于阶段失败，应以 `reports/*_report.json` 的 `status` 为准。
 - 若开启 Houdini 严格重算，`houdini` 阶段耗时可能很长；建议先 smoke，再 full。
+- **UE Python JSON BOM**：UE5 Python 脚本生成的 JSON 文件可能含 UTF-8 BOM，导致 `json.loads()` 失败。所有 JSON 读取应使用 `utf-8-sig` 编码。
+- **skip_train 模式报告缺失**：`skip_train=true` 时 `ue_setup` 跳过，不生成 `setup_diff_report.json`。下游脚本需检查此文件存在性并做条件分支。
+- **Demo 路线 track 依赖**：Demo executor 要求 LevelSequence 包含 `MovieSceneSkeletalAnimationTrack`。`Main_Sequence` 等 cinematic 序列可能仅有 camera track，无法用于 demo 采集。
 
 ## guard_flags
 - `run_all.ps1` 支持守护参数：
@@ -152,6 +155,7 @@ description: Train and validate UE5 ML Deformer models (Neural Morph / Nearest N
 5. UE runtime executor 实现位于：
    - `Content/Python/init_unreal.py`
    - `Content/Python/Hou2UeDemoRuntimeExecutor.py`
+6. **Demo 路线约束**：Demo executor 的 `_swap_sequence_animation()` 要求目标 LevelSequence 包含 `MovieSceneSkeletalAnimationTrack`。`Main_Sequence` 不包含此 track（仅用于 GT 采集的 cinematic 序列），因此 demo 路线必须使用 DemoRoom 序列。
 
 ## infer_demo_artifacts
 1. 总报告：`reports/infer_demo_report.json`
@@ -172,6 +176,7 @@ description: Train and validate UE5 ML Deformer models (Neural Morph / Nearest N
 2. `bad sequence/animation`：核对 `ue.infer.demo.routes[].level_sequence` 与 `ue.infer.test_animations` 路径是否可加载。
 3. `repeated error abort`：提高 `ue.infer.demo.guard.repeated_error_threshold` 或先修复首个重复异常行。
 4. `timeout/no activity abort`：调整 `ue.infer.demo.timeout.per_job_minutes` 与 `ue.infer.demo.timeout.no_activity_minutes`，并检查渲染进程是否实际有输出。
+5. `MovieSceneSkeletalAnimationTrack not found`：Demo executor 无法在目标 LevelSequence 中找到骨骼动画 track。确认使用的 LevelSequence 包含 `MovieSceneSkeletalAnimationTrack`（如 DemoRoom 的 `LS_NMM_Local`/`LS_NearestNeighbour`），而非仅有 camera cut track 的 cinematic 序列（如 `Main_Sequence`）。
 
 ## infer_demo_commands
 1. 仅跑 infer（含 demo 出图）：
@@ -229,21 +234,22 @@ description: Train and validate UE5 ML Deformer models (Neural Morph / Nearest N
 6. 未来影响：若关闭 `skip_train` 并使用 pipeline 生成的 ABC 重新导入训练，此修复防止双重坐标变换导致的训练数据错误。
 
 ## latest_validated_runs
-- **最新 pipeline 通过 run**：`pipeline/hou2ue/workspace/runs/20260225_170711_smoke`。
-  - 使用配置：`pipeline/hou2ue/config/pipeline.full_exec.yaml`（`training_data_source: pipeline`，`skip_train: false`）。
+- **最新 skip_train 通过 run**：`pipeline/hou2ue/workspace/runs/20260225_194534_smoke`。
+  - 使用配置：`pipeline/hou2ue/config/pipeline.full_exec.yaml`（`skip_train: true`，`training_data_source: reference`）。
   - profile: `smoke`。
-  - 全阶段状态：all 12 stages = success。
-  - Training：NMM flesh 3431s, NNM upper 39s, NNM lower 24s, determinism enabled (seed 3407).
+  - 全阶段状态：all 11 stages = success。
+  - Demo 采集：6 jobs (2 routes × 3 anims)，720 frames。
+  - GT 指标：`ssim_mean=0.9955`，`ssim_p05=0.9953`，`psnr_mean=53.36`，`psnr_min=52.21`，`edge_iou=0.987`。
+  - 关键修复：demo 路线回退到 DemoRoom，BOM 编码修复，build_report.py 守卫，阈值对齐。
+- **前次 pipeline 通过 run**：`pipeline/hou2ue/workspace/runs/20260225_170711_smoke`。
+  - 使用配置：`pipeline/hou2ue/config/pipeline.full_exec.yaml`（`training_data_source: pipeline`，`skip_train: false`）。
   - GT 指标（windowed SSIM）：`ssim_mean=0.776`，`ssim_p05=0.697`，`psnr_mean=18.62`，`psnr_min=15.29`，`edge_iou=0.665`。
   - Coord transforms：flesh=Z-up identity, NNM upper=Y-up→Z-up swap, NNM lower=Z-up identity。
-- **前次 skip_train 通过 run**：`pipeline/hou2ue/workspace/runs/20260225_122128_smoke`。
-  - 使用配置：`pipeline/hou2ue/config/pipeline.full_exec.yaml`（`skip_train: true`）。
+- **前次 skip_train run（参考）**：`pipeline/hou2ue/workspace/runs/20260225_122128_smoke`。
   - GT 指标（global SSIM）：`ssim_mean=0.9997`，`ssim_p05=0.9996`，`psnr_mean=53.61`，`psnr_min=52.28`，`edge_iou=0.9875`。
-  - deformer 拷贝 SHA-256 校验：3/3 match=true。
 - **前次 strict 失败 run（重训）**：`pipeline/hou2ue/workspace/runs/20260224_230628_smoke`。
   - GT 指标：`ssim_mean=0.9813`，`ssim_p05=0.9523`，`psnr_mean=36.01`，`psnr_min=29.38`，`edge_iou=0.9697`。
   - 失败原因：跨环境训练非确定性。
-- 历史放宽阈值成功 run（仅参考）：`20260223_233000_full`、`20260223_025229_full`、`20260223_020704_full`。
 - 非阻断告警：启动日志可能出现贴图/旧 GeomCache 缺失告警与 revision control checkout 提示，不影响本流水线报告状态。
 
 ## current_blockers

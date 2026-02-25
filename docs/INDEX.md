@@ -62,6 +62,8 @@
 - `docs/memory/checkpoint-20260224_172438-gt-strict-closure.md`
 - `docs/memory/checkpoint-20260224_185205-strict-closure-impl-progress.md`
 - `docs/memory/checkpoint-20260225-skip-train-validated.md`
+- `docs/memory/checkpoint-20260225-unified-pipeline-validated.md`
+- `docs/memory/checkpoint-20260225-strict-reference-pipeline-pass.md`
 
 ### 2.10 仓库根目录 `prototype`（docs 外的实现目录）
 - `prototype/README.md`

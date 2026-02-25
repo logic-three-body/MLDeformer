@@ -27,7 +27,7 @@ def _load_stage_report(path: Path) -> Dict[str, Any] | None:
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8-sig"))
     except Exception:
         return None
 
@@ -229,6 +229,7 @@ def main() -> int:
         if not isinstance(strict_clone_cfg, dict):
             strict_clone_cfg = {}
         strict_clone_enabled = bool(strict_clone_cfg.get("enabled", False))
+        skip_train = bool(training_cfg.get("skip_train", False))
         if strict_clone_enabled:
             if reference_setup_dump_report is None:
                 failures.append(
@@ -246,14 +247,17 @@ def main() -> int:
                     }
                 )
 
-            if setup_diff_report is None:
+            # When skip_train is enabled, ue_setup is skipped entirely so no setup_diff
+            # is generated.  The reference networks are used directly, making the diff
+            # unnecessary — asset configs are unchanged from reference baseline.
+            if setup_diff_report is None and not skip_train:
                 failures.append(
                     {
                         "stage": "setup_diff",
                         "message": "Missing setup_diff_report.json while strict_clone is enabled.",
                     }
                 )
-            elif setup_diff_report.get("status") != "success":
+            elif setup_diff_report is not None and setup_diff_report.get("status") != "success":
                 # In pipeline mode, setup_diff may report expected mismatches for training
                 # data fields (training_input_anims, nnm_sections). These are intentional
                 # and should not cause a pipeline-level failure.
