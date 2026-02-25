@@ -30,6 +30,12 @@ def _load_gray(path: Path) -> np.ndarray:
         return np.asarray(img.convert("L"), dtype=np.float32)
 
 
+def _load_rgb(path: Path) -> np.ndarray:
+    """Load image as float32 RGB (H, W, 3)."""
+    with Image.open(path) as img:
+        return np.asarray(img.convert("RGB"), dtype=np.float32)
+
+
 def _ssim_global(x: np.ndarray, y: np.ndarray) -> float:
     """Windowed SSIM (Wang et al. 2004) with 11x11 uniform window.
 
@@ -90,6 +96,19 @@ def _psnr(x: np.ndarray, y: np.ndarray) -> float:
     if mse <= 1e-12:
         return 99.0
     return float(20.0 * math.log10(255.0 / math.sqrt(mse)))
+
+
+def _ssim_color(ref_rgb: np.ndarray, src_rgb: np.ndarray) -> float:
+    """Per-channel windowed SSIM averaged across R, G, B."""
+    channel_ssims = []
+    for ch in range(3):
+        channel_ssims.append(_ssim_global(ref_rgb[..., ch], src_rgb[..., ch]))
+    return float(np.mean(channel_ssims))
+
+
+def _psnr_color(ref_rgb: np.ndarray, src_rgb: np.ndarray) -> float:
+    """PSNR computed on all RGB channels jointly."""
+    return _psnr(ref_rgb, src_rgb)
 
 
 def _edge_iou(x: np.ndarray, y: np.ndarray) -> float:
@@ -310,6 +329,12 @@ def main() -> int:
                 roi_ssim = _ssim_global(ref_roi, src_roi)
                 roi_psnr = _psnr(ref_roi, src_roi)
 
+                # Color (RGB) metrics — supplementary, not gating
+                ref_rgb = _load_rgb(ref_path)
+                src_rgb = _load_rgb(src_path)
+                color_ssim = _ssim_color(ref_rgb, src_rgb)
+                color_psnr = _psnr_color(ref_rgb, src_rgb)
+
                 rows.append(
                     {
                         "frame_index": index,
@@ -320,6 +345,8 @@ def main() -> int:
                         "edge_iou": edge_iou,
                         "body_roi_ssim": roi_ssim,
                         "body_roi_psnr": roi_psnr,
+                        "color_ssim": color_ssim,
+                        "color_psnr": color_psnr,
                     }
                 )
 
@@ -334,6 +361,8 @@ def main() -> int:
             edge_values = np.asarray([row["edge_iou"] for row in rows], dtype=np.float64)
             roi_ssim_values = np.asarray([row["body_roi_ssim"] for row in rows], dtype=np.float64)
             roi_psnr_values = np.asarray([row["body_roi_psnr"] for row in rows], dtype=np.float64)
+            color_ssim_values = np.asarray([row["color_ssim"] for row in rows], dtype=np.float64)
+            color_psnr_values = np.asarray([row["color_psnr"] for row in rows], dtype=np.float64)
 
             metrics_summary = {
                 "frame_count_compared": int(len(rows)),
@@ -346,6 +375,10 @@ def main() -> int:
                 "body_roi_ssim_p05": float(np.percentile(roi_ssim_values, 5)),
                 "body_roi_psnr_mean": float(np.mean(roi_psnr_values)),
                 "body_roi_psnr_min": float(np.min(roi_psnr_values)),
+                "color_ssim_mean": float(np.mean(color_ssim_values)),
+                "color_ssim_p05": float(np.percentile(color_ssim_values, 5)),
+                "color_psnr_mean": float(np.mean(color_psnr_values)),
+                "color_psnr_min": float(np.min(color_psnr_values)),
             }
 
             gate_pass = (
@@ -374,6 +407,8 @@ def main() -> int:
                 chunk_edge = np.asarray([v["edge_iou"] for v in chunk], dtype=np.float64)
                 chunk_roi_ssim = np.asarray([v["body_roi_ssim"] for v in chunk], dtype=np.float64)
                 chunk_roi_psnr = np.asarray([v["body_roi_psnr"] for v in chunk], dtype=np.float64)
+                chunk_color_ssim = np.asarray([v["color_ssim"] for v in chunk], dtype=np.float64)
+                chunk_color_psnr = np.asarray([v["color_psnr"] for v in chunk], dtype=np.float64)
                 window_metrics.append(
                     {
                         "start_frame": int(chunk[0]["frame_index"]),
@@ -386,6 +421,8 @@ def main() -> int:
                         "edge_iou_mean": float(np.mean(chunk_edge)),
                         "body_roi_ssim_mean": float(np.mean(chunk_roi_ssim)),
                         "body_roi_psnr_mean": float(np.mean(chunk_roi_psnr)),
+                        "color_ssim_mean": float(np.mean(chunk_color_ssim)),
+                        "color_psnr_mean": float(np.mean(chunk_color_psnr)),
                     }
                 )
 

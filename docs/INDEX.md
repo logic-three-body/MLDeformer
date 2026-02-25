@@ -64,6 +64,7 @@
 - `docs/memory/checkpoint-20260225-skip-train-validated.md`
 - `docs/memory/checkpoint-20260225-unified-pipeline-validated.md`
 - `docs/memory/checkpoint-20260225-strict-reference-pipeline-pass.md`
+- `docs/memory/checkpoint-20260226-full-validation-and-optimizations.md`
 
 ### 2.10 仓库根目录 `prototype`（docs 外的实现目录）
 - `prototype/README.md`

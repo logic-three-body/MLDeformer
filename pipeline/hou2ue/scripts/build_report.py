@@ -162,12 +162,27 @@ def main() -> int:
         setup_diff_report = _load_stage_report(setup_diff_report_path)
         train_determinism_report = _load_stage_report(train_determinism_report_path)
 
+        # Determine skip_train early so we know which stages are expected
+        training_cfg_early = (
+            cfg.get("ue", {}).get("training", {})
+            if isinstance(cfg.get("ue"), dict)
+            else {}
+        )
+        if not isinstance(training_cfg_early, dict):
+            training_cfg_early = {}
+        skip_train_flag = bool(training_cfg_early.get("skip_train", False))
+        # Stages that produce GeomCache and are skipped when skip_train=true
+        skip_train_bypass_stages = {"preflight", "houdini", "convert", "ue_import"}
+
         stage_reports: Dict[str, Dict[str, Any] | None] = {}
         failures: List[Dict[str, Any]] = []
         for stage in stages:
             sr = _load_stage_report(stage_report_path(run_dir, stage))
             stage_reports[stage] = sr
             if sr is None:
+                if skip_train_flag and stage in skip_train_bypass_stages:
+                    # These stages are intentionally skipped under skip_train shortcut
+                    continue
                 failures.append({"stage": stage, "message": "Missing stage report"})
                 continue
             if sr.get("status") != "success":
@@ -311,7 +326,11 @@ def main() -> int:
                     for stage in stages
                 },
                 "stage_status": {
-                    stage: (stage_reports[stage] or {}).get("status", "missing")
+                    stage: (
+                        "skipped_skip_train"
+                        if (skip_train_flag and stage in skip_train_bypass_stages and stage_reports.get(stage) is None)
+                        else (stage_reports[stage] or {}).get("status", "missing")
+                    )
                     for stage in stages
                 },
                 "infer_demo_report": str(infer_demo_path.resolve()) if infer_demo_path.exists() else "",

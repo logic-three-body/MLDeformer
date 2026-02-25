@@ -694,7 +694,22 @@ function Run-Stage([string]$StageName) {
 }
 
 if ($Stage -eq "full") {
-    $ordered = @("baseline_sync", "preflight", "houdini", "convert", "ue_import", "ue_setup", "train", "infer", "gt_reference_capture", "gt_source_capture", "gt_compare", "report")
+    # Determine if skip_train is enabled to decide stage ordering
+    $fullSkipTrain = $false
+    if ($null -ne $ConfigObj.ue -and $null -ne $ConfigObj.ue.training -and $null -ne $ConfigObj.ue.training.skip_train) {
+        $fullSkipTrain = [bool]$ConfigObj.ue.training.skip_train
+    }
+
+    if ($fullSkipTrain) {
+        # skip_train shortcut: stages 2-5 (preflight/houdini/convert/ue_import) produce GeomCache
+        # that is never consumed when training is skipped. Jump straight to inference path.
+        $ordered = @("baseline_sync", "ue_setup", "train", "infer", "gt_reference_capture", "gt_source_capture", "gt_compare", "report")
+        Write-Host "[hou2ue] skip_train shortcut: skipping preflight/houdini/convert/ue_import (GeomCache unused)"
+    }
+    else {
+        $ordered = @("baseline_sync", "preflight", "houdini", "convert", "ue_import", "ue_setup", "train", "infer", "gt_reference_capture", "gt_source_capture", "gt_compare", "report")
+    }
+
     foreach ($s in $ordered) {
         Write-Host "[hou2ue] Running stage: $s"
         Run-Stage $s

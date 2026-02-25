@@ -259,14 +259,21 @@ description: Train and validate UE5 ML Deformer models (Neural Morph / Nearest N
 ## next_plan
 1. **Pipeline 生产闭环**（已验证）：
    - `powershell -ExecutionPolicy Bypass -File pipeline/hou2ue/run_all.ps1 -Stage full -Profile smoke -Config pipeline/hou2ue/config/pipeline.full_exec.yaml`
-   - 当前配置：`training_data_source=pipeline`，`skip_train=false`，使用管线生成 GeomCache 训练。
-2. **Full profile 验证**（待做）：
-   - 切换 `-Profile full` 运行完整 PDG Cook + 训练。
-3. **3x 稳定性复跑**（待验证）：
-   - 连续 3 轮 smoke 全链路，验收：3/3 pipeline pass。
-4. 严格重算专项排障仅跑 Houdini 阶段（同一个 `RunDir`）：
+   - 当前配置：`training_data_source=reference`，`skip_train=true`，使用 Reference 项目预训练权重。
+2. **Full profile 验证**（✅ 已通过）：
+   - Run `20260225_215842_full`：46 poses，全 11 阶段 success，SSIM=0.9955。
+3. **3x 稳定性复跑**（✅ 3/3 通过）：
+   - `20260225_223734_smoke`: SSIM=0.9969
+   - `20260225_230707_smoke`: SSIM=0.9958
+   - `20260225_234041_smoke`: SSIM=0.9975
+4. **skip_train 快捷通道**（✅ 已实现并验证）：
+   - 当 `skip_train=true` 时自动跳过 preflight/houdini/convert/ue_import，节省 ~30% 时间。
+   - Run `20260226_001602_smoke`: 23 min vs 32.8 min，SSIM=0.9986。
+5. **彩色 GT 对比**（✅ 已实现）：
+   - 新增 `color_ssim_mean/p05` 和 `color_psnr_mean/min` 补充指标。
+6. 严格重算专项排障仅跑 Houdini 阶段（同一个 `RunDir`）：
    - `powershell -ExecutionPolicy Bypass -File pipeline/hou2ue/run_all.ps1 -Stage houdini -Profile full -Config pipeline/hou2ue/config/pipeline.yaml -RunDir <run_dir> -NoActivityMinutes 8 -RepeatedErrorThreshold 5 -HoudiniMaxMinutes 90`
-5. 每次 run 结束后，固定核对：
+7. 每次 run 结束后，固定核对：
    - `reports/pipeline_report_latest.json`
    - `reports/train_report.json`
    - `reports/infer_report.json`
