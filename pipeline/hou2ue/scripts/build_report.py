@@ -148,8 +148,6 @@ def main() -> int:
             "gt_source_capture",
             "gt_compare",
         ]
-        infer_demo_path = run_dir / "reports" / "infer_demo_report.json"
-        infer_demo_report = _load_stage_report(infer_demo_path)
         baseline_sync_path = run_dir / "reports" / "baseline_sync_report.json"
         gt_compare_path = run_dir / "reports" / "gt_compare_report.json"
         coord_validation_path = run_dir / "reports" / "coord_validation_report.json"
@@ -333,12 +331,6 @@ def main() -> int:
                     )
                     for stage in stages
                 },
-                "infer_demo_report": str(infer_demo_path.resolve()) if infer_demo_path.exists() else "",
-                "infer_demo_status": (
-                    str((infer_demo_report or {}).get("status", "missing"))
-                    if infer_demo_path.exists()
-                    else "missing"
-                ),
                 "baseline_sync_report": str(baseline_sync_path.resolve()) if baseline_sync_path.exists() else "",
                 "gt_compare_report": str(gt_compare_path.resolve()) if gt_compare_path.exists() else "",
                 "coord_validation_report": (

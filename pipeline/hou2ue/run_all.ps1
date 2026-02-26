@@ -497,7 +497,6 @@ $houdiniExportScript = Join-Path $ScriptsDir "houdini_export_abc.py"
 $ueImportScript = Join-Path $ScriptsDir "ue_import.py"
 $ueSetupScript = Join-Path $ScriptsDir "ue_setup_assets.py"
 $ueTrainScript = Join-Path $ScriptsDir "ue_train.py"
-$ueDemoCaptureScript = Join-Path $ScriptsDir "ue_demo_capture.py"
 $ueInferScript = Join-Path $ScriptsDir "ue_infer.py"
 $baselineSyncScript = Join-Path $ScriptsDir "sync_reference_baseline.py"
 $dumpReferenceSetupScript = Join-Path $ScriptsDir "dump_reference_setup.py"
@@ -665,8 +664,6 @@ function Run-Stage([string]$StageName) {
         }
         "infer" {
             Assert-UE
-            Assert-Python
-            Invoke-PythonScript -Interpreter $ResolvedPythonExe -ScriptPath $ueDemoCaptureScript -StageName "infer"
             Invoke-UnrealPythonScript -ScriptPath $ueInferScript
         }
         "gt_reference_capture" {

@@ -354,39 +354,7 @@
       "console_commands": [
         "stat mldeformerinference",
         "stat gpu"
-      ],
-      "demo": {
-        "enabled": true,
-        "driver": "runtime_mrq_python_executor",
-        "output": {
-          "format": "png",
-          "width": 1280,
-          "height": 720,
-          "clip_frames": 120,
-          "zero_pad": 4
-        },
-        "timeout": {
-          "per_job_minutes": 30,
-          "no_activity_minutes": 8
-        },
-        "guard": {
-          "repeated_error_threshold": 6
-        },
-        "routes": [
-          {
-            "name": "nmm_flesh",
-            "level_sequence": "/Game/Global/DemoRoom/LevelSequences/LS_NMM_Local",
-            "map": "/Game/Maps/L_MLD_LearningCorridor",
-            "animation_source": "infer_test_animations"
-          },
-          {
-            "name": "nnm_upper",
-            "level_sequence": "/Game/Global/DemoRoom/LevelSequences/LS_NearestNeighbour",
-            "map": "/Game/Maps/L_MLD_LearningCorridor",
-            "animation_source": "infer_test_animations"
-          }
-        ]
-      }
+      ]
     },
     "ground_truth": {
       "enabled": true,

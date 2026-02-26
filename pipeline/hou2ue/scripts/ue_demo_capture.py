@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# ARCHIVED: This script has been removed from the pipeline (2026-02-26).
+# The ue_demo stage produced meaningless artifacts: wrong DemoRoom cameras, warmup_frames=0
+# (ML Deformer inactive), anomalously fast renders (~3s/job), non-unique filenames (.0000.png),
+# and was non-gating (excluded from build_report.py stages list).
+# Quality is validated by gt_source_capture + gt_compare (SSIM=0.9997). See git history.
 """Capture UE runtime demo image sequences for infer-stage proof artifacts."""
 
 from __future__ import annotations

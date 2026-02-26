@@ -43,7 +43,6 @@ description: Train and validate UE5 ML Deformer models (Neural Morph / Nearest N
 - 运行时可观察到形变随动画变化。
 - `STAT_MLDeformerInference` 有稳定可重复统计值。
 - 极端姿态下不出现明显爆炸。
-- infer 阶段 `infer_demo_report.json` 为 `success`，且每个作业输出帧数达到配置阈值（默认 120）。
 - `gt_compare_report.json` 使用 strict 阈值并输出 `strict_profile_name` + `strict_thresholds_hash`。
 - strict 阈值固定：`ssim_mean>=0.995`、`ssim_p05>=0.985`、`psnr_mean>=35`、`psnr_min>=30`、`edge_iou_mean>=0.97`。
 
@@ -55,8 +54,7 @@ description: Train and validate UE5 ML Deformer models (Neural Morph / Nearest N
    - `powershell -ExecutionPolicy Bypass -File pipeline/hou2ue/run_all.ps1 -Stage full -Profile full -Config pipeline/hou2ue/config/pipeline.full_exec.yaml`
 4. 断点续跑（推荐）：
    - `-Stage convert|ue_import|ue_setup|train|infer|report -RunDir <existing_run_dir>`
-5. infer 出图默认已并入 `-Stage infer`，无需单独 stage。
-6. full 顺序已扩展：`baseline_sync -> preflight -> houdini -> convert -> ue_import -> ue_setup -> train -> infer -> gt_reference_capture -> gt_source_capture -> gt_compare -> report`。
+5. full 顺序已扩展：`baseline_sync -> preflight -> houdini -> convert -> ue_import -> ue_setup -> train -> infer -> gt_reference_capture -> gt_source_capture -> gt_compare -> report`。
 
 ## reference_baseline_sync
 1. Stage：`baseline_sync`，脚本：`pipeline/hou2ue/scripts/sync_reference_baseline.py`。
@@ -143,48 +141,6 @@ description: Train and validate UE5 ML Deformer models (Neural Morph / Nearest N
   - `-RepeatedErrorThreshold <int>`
   - `-HoudiniMaxMinutes <int>`
 - 作用：检测重复异常行、长时间无活动、阶段超时后自动中止并输出 guard 日志。
-- infer demo 子流程还支持配置守护（`ue.infer.demo.timeout/guard`），用于单作业提前中止，避免盲跑到超时。
-
-## infer_demo_route
-1. infer 阶段新增子流程：`ue_demo_capture.py -> ue_infer.py`。
-2. 默认路线：
-   - `nmm_flesh`：`/Game/Global/DemoRoom/LevelSequences/LS_NMM_Local`
-   - `nnm_upper`：`/Game/Global/DemoRoom/LevelSequences/LS_NearestNeighbour`
-3. 默认动画源：`ue.infer.test_animations`（box/jog/rom 三条）。
-4. 默认输出规格：`PNG 1280x720`，每段 `120` 帧，覆盖 `2 routes x 3 anims = 6 jobs`。
-5. UE runtime executor 实现位于：
-   - `Content/Python/init_unreal.py`
-   - `Content/Python/Hou2UeDemoRuntimeExecutor.py`
-6. **Demo 路线约束**：Demo executor 的 `_swap_sequence_animation()` 要求目标 LevelSequence 包含 `MovieSceneSkeletalAnimationTrack`。`Main_Sequence` 不包含此 track（仅用于 GT 采集的 cinematic 序列），因此 demo 路线必须使用 DemoRoom 序列。
-
-## infer_demo_artifacts
-1. 总报告：`reports/infer_demo_report.json`
-2. infer 汇总：`reports/infer_report.json`（包含 demo 摘要字段）
-3. 单作业报告：`reports/infer_demo_jobs/*.json`
-4. 作业日志：`reports/logs/infer_demo/*.stdout.log`、`reports/logs/infer_demo/*.stderr.log`
-5. 图像序列目录：
-   - `workspace/staging/<profile>/ue_demo/<route>/<anim>/frames/*.png`
-
-## infer_demo_acceptance
-1. `infer_demo_report.json.status == success`。
-2. `jobs_summary.total == 6` 且 `failed == 0`（默认配置）。
-3. 每个 job `frame_count >= 120`（默认 `clip_frames`）。
-4. `infer_report.json.outputs.demo_capture_status == success`。
-
-## infer_demo_troubleshooting
-1. `Missing executor`：检查 `Content/Python/init_unreal.py` 是否导入 `Hou2UeDemoRuntimeExecutor`，以及启动参数是否包含 `-ExecutorPythonClass=/Engine/PythonTypes.Hou2UeDemoRuntimeExecutor`。
-2. `bad sequence/animation`：核对 `ue.infer.demo.routes[].level_sequence` 与 `ue.infer.test_animations` 路径是否可加载。
-3. `repeated error abort`：提高 `ue.infer.demo.guard.repeated_error_threshold` 或先修复首个重复异常行。
-4. `timeout/no activity abort`：调整 `ue.infer.demo.timeout.per_job_minutes` 与 `ue.infer.demo.timeout.no_activity_minutes`，并检查渲染进程是否实际有输出。
-5. `MovieSceneSkeletalAnimationTrack not found`：Demo executor 无法在目标 LevelSequence 中找到骨骼动画 track。确认使用的 LevelSequence 包含 `MovieSceneSkeletalAnimationTrack`（如 DemoRoom 的 `LS_NMM_Local`/`LS_NearestNeighbour`），而非仅有 camera cut track 的 cinematic 序列（如 `Main_Sequence`）。
-
-## infer_demo_commands
-1. 仅跑 infer（含 demo 出图）：
-   - `powershell -ExecutionPolicy Bypass -File pipeline/hou2ue/run_all.ps1 -Stage infer -Profile smoke -RunDir <run_dir>`
-2. 全链路（含 demo 出图）：
-   - `powershell -ExecutionPolicy Bypass -File pipeline/hou2ue/run_all.ps1 -Stage full -Profile smoke`
-3. full_exec 配置全链路：
-   - `powershell -ExecutionPolicy Bypass -File pipeline/hou2ue/run_all.ps1 -Stage full -Profile full -Config pipeline/hou2ue/config/pipeline.full_exec.yaml`
 
 ## strict_houdini_tip
 - 严格 `full` 常见无法在单窗口完成，建议分段执行并检查进度：
