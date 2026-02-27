@@ -73,3 +73,6 @@ pipeline/hou2ue/workspace/
 Refference/
 Content/Characters/Emil/GeomCache/
 
+# UE5.7 compat workspace — managed as its own git repo
+UE57/
+
