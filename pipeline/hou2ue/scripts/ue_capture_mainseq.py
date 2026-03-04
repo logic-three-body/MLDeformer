@@ -225,7 +225,7 @@ def _ensure_runtime_executor_available(target_uproject: Path, source_project_roo
 
 def main() -> int:
     args = parse_args()
-    run_dir = Path(args.run_dir)
+    run_dir = Path(args.run_dir).resolve()  # resolve once: UE needs absolute paths for CLI flags
     stage_name = "gt_reference_capture" if args.capture_kind == "reference" else "gt_source_capture"
     report_path = stage_report_path(run_dir, stage_name)
 
