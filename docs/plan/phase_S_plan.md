@@ -15,6 +15,8 @@
 | Heatmap 自动归一化修复 | ✅ 已提交 `f995219` |
 | 相机机位验证（未发生变化） | ✅ 调查完成，见 checklist §R |
 | UE57 docs 更新 | ✅ 已提交 `38570cd` |
+| **S1：阈值收紧 + debug_mode 移除** | ✅ 已提交 UE57 `c3b99b3`（2026-03-04）|
+| **S2（S3）：gt_compare 验证新阈值 ALL PASS** | ✅ Run `20260301_162455_smoke` ALL PASS |
 
 ---
 
