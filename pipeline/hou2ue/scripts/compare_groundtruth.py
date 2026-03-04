@@ -143,7 +143,10 @@ def _edge_iou(x: np.ndarray, y: np.ndarray) -> float:
 
 def _write_heatmap(ref_gray: np.ndarray, src_gray: np.ndarray, out_path: Path) -> str:
     diff = np.abs(ref_gray - src_gray)
-    norm = np.clip(diff, 0.0, 255.0).astype(np.uint8)
+    # Auto-normalise: map [0, max_diff] → [0, 255] so small differences become visible.
+    # Use a minimum ceiling of 30 to avoid noise amplification on near-identical frames.
+    ceil = max(float(diff.max()), 30.0)
+    norm = np.clip((diff / ceil) * 255.0, 0.0, 255.0).astype(np.uint8)
     heat = np.zeros((norm.shape[0], norm.shape[1], 3), dtype=np.uint8)
     heat[..., 0] = norm
     heat[..., 1] = (norm // 4)
