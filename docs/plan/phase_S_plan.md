@@ -17,6 +17,7 @@
 | UE57 docs 更新 | ✅ 已提交 `38570cd` |
 | **S1：阈值收紧 + debug_mode 移除** | ✅ 已提交 UE57 `c3b99b3`（2026-03-04）|
 | **S2（S3）：gt_compare 验证新阈值 ALL PASS** | ✅ Run `20260301_162455_smoke` ALL PASS |
+| **S4：修复 Source 帧 MLD 渲染污染** | ✅ UE57 `9b3b172`（2026-03-05）LBS-vs-LBS ssim=0.9994 ALL PASS |
 
 ---
 
