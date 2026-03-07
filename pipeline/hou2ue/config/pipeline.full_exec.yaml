@@ -336,8 +336,8 @@
                                       "flesh"
                                   ],
                "training":  {
-                                "skip_train":  false,
-                                "_skip_train_note":  "Phase 3 active (2026-03-01): ArtSource confirmed, PDG partial outputs reused via reuse_existing_outputs+allow_sample_padding. SkinningMode audit confirmed default=Linear, no override needed.",
+                                "skip_train":  true,
+                                "_skip_train_note":  "experiment/V-4 LBS sanity: skip training entirely, compare LBS-vs-LBS to verify pipeline health.",
                                 "training_data_source":  "pipeline",
                                 "_training_data_source_options":  "reference | pipeline  (use 'pipeline' when GeomCaches are produced by Houdini PDG and training_input_anims use {profile} templates)",
                                 "determinism":  {
@@ -381,7 +381,7 @@
                                                     "static_reference_frames_dir":  "D:/UE/Unreal Projects/MLDeformerSample/UE57/pipeline/hou2ue/workspace/runs/20260301_162455_smoke/workspace/staging/smoke/gt/reference/frames",
                                                     "static_source_frames_dir":  "",
                                                     "render_mode":  "basecolor",
-                                                    "disable_ml_deformer_for_source":  false,
+                                                    "disable_ml_deformer_for_source":  true,
                                                     "extra_ue_cmd_args":  ["-d3dadapter=1"]
                                                 },
                                     "compare":  {
