@@ -124,7 +124,16 @@ MLDeformerSample/
 │   └── plan/                       ← 实验计划
 │
 ├── prototype/                  ← 独立原型环境（WSL 训练 + Win 推理）
-└── UE57/                       ← UE 5.7 适配子目录（独立 git 仓库）
+└── UE57/                       ← UE 5.7 git worktree（仅作版本对比参考，非训练路径）
+```
+
+> ⚠️ **重要路径说明**：本仓库的 `UE57/` 子目录（`...MLDeformerSample\UE57\`）是 **git worktree 参考副本**，
+> 其 `Content/Characters/Emil/Deformers/` 中的 `.uasset` 文件为历史旧版（2 月 2 日），**不是最新训练产出**。  
+> 实际训练在独立工程路径 `D:\UE\Unreal Projects\UE57\MLDeformerSample\` 执行，该路径下的模型才是最新版本。  
+> 详见 [Q8：两个 UE57 路径有什么区别？](#q8两个-ue57-路径有什么区别)
+
+```
+MLDeformerSample/
 ```
 
 ---
@@ -601,10 +610,36 @@ $hou2ue = "D:\UE\Unreal Projects\MLDeformerSample\UE57\pipeline\hou2ue"
 
 **A**：监控 UE 训练日志：
 ```powershell
-Get-Content "D:\UE\Unreal Projects\MLDeformerSample\UE57\Saved\Logs\MLDeformerSample.log" `
+# 实际训练路径（D:\UE\Unreal Projects\UE57\MLDeformerSample\）
+Get-Content "D:\UE\Unreal Projects\UE57\MLDeformerSample\Saved\Logs\MLDeformerSample.log" `
     | Select-String "Training iteration|Avg loss" | Select-Object -Last 10
 ```
 正常情况下每隔几百 iter 输出一行，loss 应从 0.1 左右逐步降至 0.01–0.02。
+
+> ⚠️ **注意路径**：日志在 `D:\UE\Unreal Projects\UE57\MLDeformerSample\`，  
+> 而非 `D:\UE\Unreal Projects\MLDeformerSample\UE57\`（后者是对比参考副本）。
+
+---
+
+### Q8：两个 UE57 路径有什么区别？
+
+**A**：这是本项目最容易踩的陷阱，路径名字相似但含义完全不同：
+
+| 路径 | 用途 | 模型文件状态 |
+|------|------|-------------|
+| `D:\UE\Unreal Projects\MLDeformerSample\UE57\` | **git worktree 对比副本**（只读参考） | 旧版文件，2 月 2 日时间戳，292 MB flesh |
+| `D:\UE\Unreal Projects\UE57\MLDeformerSample\` | **实际训练执行路径**（pipeline 的 uproject 指向此处） | Phase V 最新产出，3 月 8 日，207 MB flesh |
+
+**如何确认哪个路径在训练？**  
+检查 pipeline config 的 `paths.uproject` 字段：
+```powershell
+(Get-Content "D:\UE\Unreal Projects\UE57\MLDeformerSample\pipeline\hou2ue\config\pipeline.full_exec.yaml" | ConvertFrom-Json).paths.uproject
+# 应输出包含 "D:\UE\Unreal Projects\UE57\MLDeformerSample" 的路径
+```
+
+**GitHub Release 资产来源**：  
+所有 `.uasset` 均来自 `D:\UE\Unreal Projects\UE57\MLDeformerSample\Content\Characters\Emil\Deformers\`，  
+共 6 个文件（3 个训练模型 + 2 个 DynamicGroom 辅助资产 + 1 个 MeshDeformerCollection）。
 
 ---
 

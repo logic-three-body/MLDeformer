@@ -225,3 +225,24 @@ Local 模式对应键名为 `local_num_morph_targets_per_bone`。
 | Phase TI NMM 调查 | `UE57/docs/memory/phase-TI-nmm-training-investigation.md` |
 | Phase U 视觉确认 | `UE57/docs/memory/checkpoint-20260305-phase-U-visual-confirm.md` |
 | Smoke 验证汇总 | `memories/repo/smoke_validation_summary.md` |
+
+---
+
+## 八、归档资产说明（GitHub Release）
+
+**Release tag**：`phase-v-closure`  
+**存档时间**：2026-03-08  
+**包含文件（共 6 个 uasset）**：
+
+| 文件 | 大小 | 日期 | 说明 |
+|------|------|------|------|
+| `MLD_NMMl_flesh_upperBody.uasset` | 207.1 MB | 2026-03-08 | Phase V 训练产出，ssim=0.8999，Global 128 形态目标 |
+| `MLD_NN_lowerCostume.uasset` | 245.7 MB | 2026-03-02 | NNM 下装变形器 |
+| `MLD_NN_upperCostume.uasset` | 541.2 MB | 2026-03-02 | NNM 上装变形器 |
+| `DG_DQ_Morph_RecomputeNormals.uasset` | 0.1 MB | 2026-02-02 | DQ Groom 辅助资产 |
+| `DG_LBS_Morph_RecomputeNormals.uasset` | 0.1 MB | 2026-02-02 | LBS Groom 辅助资产 |
+| `Emil_MeshDeformerCollection.uasset` | <1 MB | 2026-02-02 | Deformer 连接集合 |
+
+> ⚠️ **路径陷阱**：以上文件来源于 `D:\UE\Unreal Projects\UE57\MLDeformerSample\Content\Characters\Emil\Deformers\`（pipeline 的实际训练路径），  
+> **而非** `D:\UE\Unreal Projects\MLDeformerSample\UE57\Content\Characters\Emil\Deformers\`（git worktree 对比副本，存储的是 2月2日旧版本，292 MB flesh）。  
+> 两个路径名相似，请务必通过文件大小和时间戳验证来源。
