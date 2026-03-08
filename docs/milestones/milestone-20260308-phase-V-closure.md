@@ -1,0 +1,227 @@
+# 里程碑：Phase V 闭环 — NMM Global 模式 128 形态目标 PASS
+
+**日期：** 2026-03-08  
+**状态：** ✅ 闭环达成  
+**最终指标：** ssim_mean = **0.8999**（阈值 ≥ 0.83），9 项指标全部通过
+
+---
+
+## 一、执行摘要
+
+经过从 2026-02-01 到 2026-03-08 的完整排查周期，  
+最终将 NMM（Neural Morph Model）从默认 **Local 模式**切换为 **Global 模式（128 形态目标）**，  
+训练产出 207 MB 模型，在 1560 帧完整 Main_Sequence 上实现 ssim = 0.8999，  
+全面通过 9 项质量阈值，与 Epic Refference（0.9142）的差距缩小至 1.5 个百分点。
+
+---
+
+## 二、完整问题解决时间线
+
+### 2026-02-01 — 基线建立
+
+| 项目 | 详情 |
+|------|------|
+| 模型 | Epic Refference 预训练 NMM，306 MB |
+| 来源 | `Refference/Content/Characters/Emil/Deformers/MLD_NMMl_flesh_upperBody.uasset` |
+| 测试结果 | ssim_mean = **0.9142** ✅ |
+| 意义 | 建立了本项目所有实验的参照基准 |
+
+---
+
+### 2026-03-01 — 管线建立 + LBS 基线确认
+
+| 项目 | 详情 |
+|------|------|
+| 事件 | `pipeline/hou2ue/run_all.ps1` 端到端管线首次全流程通过 |
+| 测试模式 | LBS-vs-MLD 对比（source=MLD激活，reference=LBS only） |
+| 结果 | ssim_mean = 0.5904 |
+| 说明 | **这是正常的**：LBS 姿势与 MLD 激活图像本身有差异，0.59 是预期的"有差异"基线，不是失败 |
+| 关键修复 | `MLDeformer.ForceWeight 0` CVar 替代 `set_active(False)`（后者会导致 GPU TDR 崩溃） |
+
+---
+
+### 2026-03-03 — 第一次 NMM 训练失败（smoke GC 几何质量问题）
+
+| 项目 | 详情 |
+|------|------|
+| 训练数据 | `GC_upperBodyFlesh_smoke`（1.65 GB，pipeline 自动生成） |
+| 训练结果 | 模型从 306 MB **膨胀至 2 GB**，outputs.bin = 1.34 GB |
+| 推理表现 | shots 5-6（frames 1231-1428）出现**近黑色帧**（src_mean ≈ 16，ref_mean ≈ 77） |
+| ssim 结果 | ssim_mean = **0.5904**（与 LBS 基线相同 → 模型输出无效） |
+| **根因** | Houdini → UE ABC 导出时**单位换算错误**：顶点偏移 p50_max = **90.7 cm**（正常范围 5–30 cm）。极端顶点位移导致背面剔除（backface culling），产生近黑色帧 |
+
+**教训**：GC 导出前必须检查 `outputs.bin` 顶点偏移分布；p50_max > 30 cm 应视为红旗。
+
+---
+
+### 2026-03-05 Phase TI — 调查确认 smoke GC 有害
+
+通过对 `Intermediate/NeuralMorphModel/outputs.bin` 的统计分析：
+
+```
+Per-frame max-abs vertex offset distribution:
+  p50 = 90.7 cm  → 超出物理合理范围
+  p90 = 119.7 cm
+  max = 148.7 cm（frame 714）
+  35% 帧的最大顶点位移 > 100 cm
+```
+
+**结论**：smoke GC 数据集有害，需要从已验证的 PDG 原始数据重建。
+
+---
+
+### 2026-03-05 Phase T v3 — 还原 Refference 306 MB 模型（基线恢复）
+
+| 操作 | 详情 |
+|------|------|
+| 操作 | 从 `Refference/` 复制 306 MB 预训练模型，覆盖 2 GB 损坏模型 |
+| 结果 | ssim_mean = **0.9142** ✅（与 2026-02-01 基线完全一致） |
+| 意义 | 证明管线本身没有问题，问题仅在训练数据质量 |
+| per-window | F0-99: 0.9784，F500-599: 0.8206（最低，NMM 对极端姿态推理精度有限） |
+
+---
+
+### 2026-03-05 Phase T v4 — hero64 GC 训练（姿态覆盖不足，OOD 失败）
+
+| 项目 | 详情 |
+|------|------|
+| 训练数据 | `GC_upperBodyFlesh_hero64`（117 MB，几何质量正常：p50_max = 4.0 cm ✅） |
+| 训练结果 | 357 MB 模型，loss = 0.021（25k iter） |
+| 推理表现 | ssim_mean = **0.637** ❌ |
+| **根因** | hero64 仅 5065 帧，pose 分布覆盖面窄；Main_Sequence 包含 hero64 训练集中**未出现的姿态（OOD）**，模型在 OOD 条件下产生错误形变 |
+
+**教训**：训练数据的 pose 分布必须覆盖推理时的 pose 空间；小数据集（hero64）不足以替代完整 ROM（5k Greedy ROM）。
+
+---
+
+### 2026-03-07 Phase U — 5kGreedyROM GC + Local 模式（过参数化失败）
+
+| 项目 | 详情 |
+|------|------|
+| 训练数据 | `GC_upperBodyFlesh_5kGreedyROM`（8.46 GB，PDG 原始 Feb 2 🟢 几何正常） |
+| 训练模式 | **Local**（UE 默认） |
+| 训练结果 | **1680 MB** 模型（Epic Refference 是 292–306 MB，约 5.76× 差距） |
+| 推理表现 | ssim_mean = **0.660** ❌（两次完整 25k iter 均相同） |
+| **根因** | NMM Local 模式：每块骨骼生成独立形态键，骨骼数多 → 形态键数量爆炸 → 模型容量远超数据集信息量 → **严重过拟合训练姿态，泛化性极差** |
+
+**关键发现**：模型大小与 Epic Refference 的差距（5.76×）直接暗示架构配置错误，而非数据问题。
+
+---
+
+### 2026-03-07/08 Phase V2 — 根因闭合：Local vs Global 模式对比
+
+通过对 Refference 307 MB 模型进行参数反推：
+
+$$207\text{ MB} \approx 128 \times 200,000 \text{ verts} \times 3 \times 4 \text{ B} = 307 \text{ MB}$$
+
+| 维度 | Epic Refference（ssim=0.9142）| 我方 Local 模式（ssim=0.660）|
+|------|-------------------------------|-------------------------------|
+| **NMM 模式** | **Global** | Local（UE 默认）|
+| 形态目标数量 | **128**（`global_num_morph_targets`） | ~80 bones × 若干 = 480+ 局部基 |
+| 模型大小 | **306 MB** | **1680 MB**（5.76× 过大） |
+| 训练收敛损失 | ~0.01 | V-3 在 5401 iter 时仍 ≈ 1.44 |
+| 过拟合风险 | 低（全局基底共享约束） | 高（每骨骼独立，无共享约束） |
+
+**正确配置**（`pipeline.full_exec.yaml` 中 `deformer_assets.flesh.model_overrides`）：
+```yaml
+mode: global
+global_num_morph_targets: 128
+global_num_hidden_layers: 2
+global_num_neurons_per_layer: 128
+num_iterations: 25000
+```
+
+---
+
+### 2026-03-08 Phase V — 闭环达成 ✅
+
+| 参数 | 值 |
+|------|-----|
+| 模式 | `global` |
+| `global_num_morph_targets` | 128 |
+| `num_iterations` | 25000 |
+| 训练数据 | `upperBodyFlesh_5kGreedyROM` |
+| 最终 loss | ~0.011 |
+| 训练时长 | ~16 min（956 秒） |
+| 模型大小 | **207.1 MB**（vs Refference 306 MB，在合理范围内） |
+
+---
+
+## 三、最终质量指标（1560 帧）
+
+| 指标 | 实测值 | 阈值 | 状态 |
+|------|--------|------|------|
+| `ssim_mean` | **0.8999** | ≥ 0.83 | ✅ PASS |
+| `ssim_p05` | **0.8122** | ≥ 0.70 | ✅ PASS |
+| `psnr_mean` | **29.15 dB** | ≥ 22.0 dB | ✅ PASS |
+| `psnr_min` | **21.81 dB** | ≥ 14.0 dB | ✅ PASS |
+| `edge_iou_mean` | **0.9200** | ≥ 0.82 | ✅ PASS |
+| `ms_ssim_mean` | **0.8659** | ≥ 0.80 | ✅ PASS |
+| `ms_ssim_p05` | **0.7179** | ≥ 0.65 | ✅ PASS |
+| `de2000_mean` | **2.156** | ≤ 8.0 | ✅ PASS |
+| `de2000_p95` | **4.755** | ≤ 15.0 | ✅ PASS |
+
+> 与 Epic Refference（ssim=0.9142）对比：我方 0.8999，差距仅 1.4 个百分点。
+
+---
+
+## 四、关键技术决策说明
+
+### 4.1 GPU TDR 修复（d3dadapter=1）
+
+UE 默认选择 D3D12 adapter 0（主显卡，超频至 2535 MHz，在 NNE DirectML 推理负载下不稳定）。  
+**修复**：在 UE 命令行参数中增加 `-d3dadapter=1`，强制使用第二张 GPU（无输出信号，稳定）。
+
+```yaml
+# pipeline.full_exec.yaml
+ue:
+  ground_truth:
+    capture:
+      extra_ue_cmd_args: ["-d3dadapter=1"]
+```
+
+### 4.2 UE 崩溃帧累积恢复机制
+
+gt_source_capture 阶段 UE 在 Phase V 期间崩溃 3 次（exit code -1），分别在约 18%、43%、62.7% 处。  
+管线的 **resume 逻辑**（`ue_capture_mainseq.py`）将每次崩溃前已完成的帧累积保存，  
+重启后从上次中断点继续，最终全部 1560 帧成功捕获。
+
+### 4.3 配置键名称（关键陷阱）
+
+NMM Global 模式的配置键名为 `global_num_morph_targets`，  
+**不是** `num_global_morphs`、`num_morph_targets` 或其他变体。  
+Local 模式对应键名为 `local_num_morph_targets_per_bone`。
+
+---
+
+## 五、失败模式汇总（本项目经验）
+
+| 失败类型 | 现象 | 根因 | 修复 |
+|----------|------|------|------|
+| smoke GC 单位错误 | near-black 帧，ssim≈0.59 | Houdini 导出 ABC 时单位换算错误，顶点偏移 90+ cm | 使用 PDG 原始 5kGreedyROM GC |
+| OOD 姿态 | ssim≈0.637，全窗口均匀下降 | 训练集 pose 覆盖不足（hero64 5065 帧） | 使用 5kGreedyROM 5k 帧 |
+| Local 模式过参数化 | ssim≈0.660，模型 1680 MB | NMM 默认 Local 模式每骨骼生成形态键，过拟合 | 切换 Global 128 模式 |
+| GPU TDR 崩溃 | UE 启动后快速 exit=-1 | 主 GPU 超频，DirectML 负载下不稳定 | `-d3dadapter=1` 选择副卡 |
+| 训练后资产未更新 | UE exit=-1 但代码认为成功 | UE 训练偶发崩溃，train_report 未写入 | 检查 train_report.json 存在再继续 |
+
+---
+
+## 六、后续建议
+
+1. **增加 `global_num_morph_targets: 256`**：V3 实验（未完成）预期可进一步提高 ssim；建议作为下一个实验分支。
+2. **推理延迟 profile**：207 MB 模型尚未在目标硬件上做实时延迟测试（`STAT_MLDeformerInference`）。
+3. **Houdini ABC 导出 QC 自动化**：在 `houdini_export_abc.py` 中增加 outputs.bin 顶点偏移分布检查（p50_max > 30 cm 自动 fail），防止 smoke GC 类问题重现。
+4. **文档打包交付**：本里程碑 + 新手导航指南（`docs/guide/`）可作为项目交付文档的基础。
+
+---
+
+## 七、关联文档
+
+| 文档 | 路径 |
+|------|------|
+| Phase V 闭环 checkpoint | `UE57/docs/memory/checkpoint-20260308-phase-V-closure.md` |
+| Phase V2 根因分析 | `UE57/docs/memory/checkpoint-20260308-phase-V2-global-mode-root-cause.md` |
+| Phase T 调查记录 | `UE57/docs/memory/checkpoint-20260305-phase-T-v4b-nmm-baseline-confirmed.md` |
+| Phase TI NMM 调查 | `UE57/docs/memory/phase-TI-nmm-training-investigation.md` |
+| Phase U 视觉确认 | `UE57/docs/memory/checkpoint-20260305-phase-U-visual-confirm.md` |
+| Smoke 验证汇总 | `memories/repo/smoke_validation_summary.md` |
