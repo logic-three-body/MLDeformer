@@ -1,7 +1,7 @@
 # Milestone: Phase W kickoff (Global 256 + QC gate)
 
 日期：2026-03-08  
-状态：**进行中 — W-2B 完成（ssim=0.9000，未达标），W-2C 待决策**
+状态：**W-2C 完成（ssim=0.9004，未达标）— Phase W 容量调参系列结束，需策略转变（W-3）**
 
 ---
 
@@ -135,20 +135,61 @@ ArmouryCrate（ASUS GPU 超频工具）在 GPU 高负载约 5–12 分钟后应�
 
 ---
 
-## 四、Kickoff 阶段完成项
+## 四、W-2C 实测结果（2026-03-09 04:23 KST）
+
+> **重要背景**：W-2C 是 Phase W 中**首次真正执行 256 morphs + 256 neurons** 的实验。
+> W-1/W-2A/W-2B 均仅跑 `-Stage train`，未重新执行 `-Stage ue_setup`，导致 UE 资产实际沿用 Phase V 架构（128 morphs, 128 neurons）。
+> 证据：W-1/2A/2B GPU VRAM = **1.14 GB**（= Phase V）；W-2C ue_setup 重跑后 GPU = **1.79 GB**（= 256 neurons 实际应用）。
+
+| 参数 | 值 |
+|------|-----|
+| 模式 | `global` |
+| `global_num_morph_targets` | 256 |
+| `global_num_hidden_layers` | 2 |
+| `global_num_neurons_per_layer` | **256** |
+| `num_iterations` | **50000** |
+| ue_setup | `status: success`，`ended_at: 2026-03-08T16:00:00Z`（GPU 1.79 GB 确认）|
+| train_report.json | `status: success`，`ended_at: 2026-03-08T19:23:26Z` |
+| 最终 loss | ~0.00808（vs Phase V ~0.011，**低 27%**）|
+| gt_source_capture | ✅ 完成 |
+| gt_compare | ✅ 完成（1560 帧）|
+
+#### W-2C 质量指标（1560 帧）
+
+| 指标 | W-2C（256m/256n/50k）| W-2A（估计 128m/128n/25k）| W-2B（估计 128m/128n/25k）| Epic Ref | 阈值 | 状态 |
+|------|----------------------|--------------------------|--------------------------|----------|------|------|
+| `ssim_mean` | **0.9004** | 0.9006 | 0.9000 | **0.9142** | ≥ 0.91 | ❌ 未达标 |
+| `ssim_p05` | **0.8104** | 0.8120 | 0.8121 | — | ≥ 0.70 | ✅ |
+| `psnr_mean` | **29.57 dB** | 29.26 dB | 29.18 dB | — | ≥ 22.0 | ✅ (+0.31 dB) |
+| `ms_ssim_mean` | **0.8657** | 0.8670 | 0.8661 | — | ≥ 0.80 | ✅ |
+| `de2000_mean` | **2.138** | 2.141 | — | — | ≤ 8.0 | ✅ |
+| `edge_iou_mean` | **0.9208** | 0.9211 | — | — | ≥ 0.82 | ✅ |
+
+> **W-2C 关键结论**：
+> - 256m/256n/50k 的 PSNR 提升显著（+0.31 dB），但 ssim 几乎原地踏步（+0.0005 vs Phase V）。
+> - Loss 降低 27%（0.011 → 0.008）未能转化为 ssim 改善 → **loss 与 ssim 解耦**。
+> - Phase W 五轮实验（Phase V → W-1 → W-2A → W-2B → W-2C）ssim 始终在 0.900–0.901 区间震荡。
+> - **根本结论：NMM Global 模式架构容量（无论 128/256/512 morphs，128/256 neurons，25k/50k iters）均非 ssim 上限的瓶颈**。
+> - 下一步需策略转变（W-3）：考虑 Local 模式 / NNM 模型 / 训练数据分布分析。
+
+---
+
+## 五、Kickoff 阶段完成项
 
 - [x] 切换 NMM flesh 模型配置：Global 256 morph targets
 - [x] 增加 outputs.bin QC gate（p50_max > 30 cm 自动失败）
 - [x] 增加 `report.outputs_bin_qc` 配置块
 - [x] 编写 Phase W 计划文档
 
-## 五、待闭环项
+## 六、待闭环项
 
 - [x] gt_compare 完成，W-1 ssim=0.9005（未达标）
 - [x] W-2A 触发：`global_num_neurons_per_layer` 128→256
 - [x] W-2A 训练完成（ssim=0.9006，未达标）
 - [x] W-2A 验证链完成（gt_source + gt_compare）
 - [x] W-2B 执行：`global_num_morph_targets` 256→512（ssim=0.9000，局部下降！）
+- [x] W-2C 执行：256m/256n/50k iter，首次真正 ue_setup（ssim=0.9004，PSNR +0.31 dB）
+- [x] ue_setup 重要性确认：W-1/2A/2B 实际均为 Phase V 架构（1.14 GB），W-2C 为 1.79 GB
 - [ ] 逐帧 ssim 分析（frame 1054 区域 1000–1100）
-- [ ] W-2C / 数据培训策略决策会议
+- [ ] W-3 策略转变决策：Local 模式 / NNM / 训练数据分析
 - [ ] 记录最终指标，写入 Phase W 闭环里程碑

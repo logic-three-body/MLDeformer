@@ -94,20 +94,58 @@ global_num_neurons_per_layer: 256  # 保持 W-2A
 
 ---
 
-## W-2C 备选（256 morphs + 256 neurons + 50k iters——**待决策**）
+## W-2C 전최종（256 morphs + 256 neurons + 50k iters——**완료**）
 
-| 选项 | 改动 | 假设 | 条件 |
-|------|------|------|------|
-| **W-2C-迭代** | morphs=256, neurons=256, iters=50000 | 25k iters 不足以收敛到质量上限 | 已确认 |
-| **W-2C-数据** | 检查 5kGreedyROM pose 覆盖度 | 训练数据缺乏 frame 1054 类似姿态 | 分析任务 |
-| **W-2C-调度** | 调整学习率或损失函数权重 | 当前 loss 约 0.011-0.013 平台期，学习率策略受限 | 研究任务 |
+> **중요 배경**: ue_setup을 먼저 실행한 첫 번째 실험. W-1/W-2A/W-2B는 모두 Phase V 구조(128m/128n)로 실제 훈련됨.
+> VRAM 증거: W-1/2A/2B = 1.14 GB (Phase V), W-2C = **1.79 GB** (256 neurons 실제 적용 확인).
 
-> W-2B 退步意味着**更多 morphs 需要更多 iters**。优先尝试 W-2C-迭代（50k），成本约 90 分钟。
+**설정**:
+```yaml
+global_num_morph_targets: 256
+global_num_neurons_per_layer: 256
+num_iterations: 50000
+```
 
-### 辅助调查（并行）：
-- 提取 gt_compare 逐帧 ssim 数据，确认 frame 1054 区域（1000–1100）ssim 分布
-- 检查 5kGreedyROM 训练集中上臂极端姿态覆盖密度
-- 评估 p05 帧是否集中在上臂大幅运动区段
+**W-2C 결과**:
+| 항목 | 값 |
+|------|-----|
+| ue_setup | success, ended_at: 2026-03-08T16:00:00Z (1.79 GB 확인) |
+| ended_at | 2026-03-08T19:23:26Z |
+| 최종 loss | ~0.00808 (vs Phase V ~0.011, **-27%**) |
+| ssim_mean | **0.9004**（vs W-2A 0.9006, -0.0002） |
+| ssim_p05 | 0.8104 |
+| ms_ssim | 0.8657 |
+| psnr | **29.57 dB**（vs W-2A 29.26, **+0.31 dB**）|
+| de2000 | **2.138**（vs W-2A 2.141, 소폭 개선）|
+| edge_iou | 0.9208 |
+| 달성 | ❌ 미달（목표 ≥ 0.91）|
+
+> **W-2C 핵심 결론**:
+> - Loss -27%에도 ssim은 거의 변화 없음 → **loss와 ssim 해리(decouple)**.
+> - Phase W 5회 실험(Phase V → W-2C) ssim 범위: 0.900–0.9006 (진폭 0.0007).
+> - NMM Global 모드: morphs/neurons 용량, 반복 횟수 모두 ssim 병목이 아님.
+> - **W-3 전략 전환 필요 (아래 참조)**.
+
+---
+
+## W-3 전략 전환 방향（검토 중）
+
+Phase W 결과 요약:
+
+| 실험 | 실제 구조 | ssim | 비고 |
+|------|---------|------|------|
+| Phase V | 128m/128n/25k | 0.8999 | 기준 |
+| W-1 | 128m/128n/25k (ue_setup 미적용) | 0.9005 | 가짜 256m |
+| W-2A | 128m/128n/25k (ue_setup 미적용) | 0.9006 | 가짜 256n |
+| W-2B | 128m/128n/25k (ue_setup 미적용) | 0.9000 | 가짜 512m |
+| W-2C | **256m/256n/50k** (ue_setup 정상) | **0.9004** | 첫 진짜 실험 |
+| 목표 | Epic Ref | **0.9142** | 차이 -0.0138 |
+
+**가능한 W-3 접근 방식**:
+1. **Local 모드 전환**: 신체 구역별 전용 NMM → 상완 전용 용량 확보
+2. **NearestNeighborModel(NNM)**: 유사 포즈 기반 보간 → 데이터 커버리지 문제 완화 가능
+3. **훈련 데이터 분석**: 5kGreedyROM pose 분포, frame 1054 유사 포즈 커버리지 확인
+4. **Ground truth 품질 검토**: gt_source 렌더링 자체에 ceiling이 있는지 확인
 
 ---
 
