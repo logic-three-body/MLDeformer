@@ -16,3 +16,6 @@
 [submodule "prototype/third_party/fast-snarf"]
 	path = prototype/third_party/fast-snarf
 	url = https://github.com/xuchen-ethz/fast-snarf.git
+[submodule "UE57"]
+	path = UE57
+	url = git@github.com:logic-three-body/MLDeformer-UE57.git
