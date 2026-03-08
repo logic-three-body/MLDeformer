@@ -9,6 +9,7 @@
 - `docs/05_skill_analogy/skill-prototype-data-acquisition/SKILL.md`
 - `docs/05_skill_analogy/skill-prototype-wsl-train-orchestrator/SKILL.md`
 - `docs/05_skill_analogy/skill-prototype-win-infer-viz/SKILL.md`
+- `docs/05_skill_analogy/skill-github-release-binary-asset/SKILL.md`
 
 ## 3. 类比矩阵
 | 理论/工程主题 | 文档入口 | 建议 skill | 使用时机 | 输出结果 |
@@ -24,6 +25,7 @@
 | 原型数据获取与清洗 | `prototype/README.md` | `docs/05_skill_analogy/skill-prototype-data-acquisition/SKILL.md` | 需要快速构建外置数据根并产出清单 | 资产状态 + 数据QC |
 | WSL 训练编排 | `prototype/README.md` | `docs/05_skill_analogy/skill-prototype-wsl-train-orchestrator/SKILL.md` | 需要多方法 smoke 训练 | 统一训练报告 |
 | Windows 推理可视化 | `prototype/README.md` | `docs/05_skill_analogy/skill-prototype-win-infer-viz/SKILL.md` | 需要生成误差/时延图表 | 推理报告 + 对比图 |
+| 里程碑模型 GitHub 存档 | `docs/milestones/milestone-20260308-phase-V-closure.md` | `docs/05_skill_analogy/skill-github-release-binary-asset/SKILL.md` | 训练产物超 100 MB / 被 gitignore / 需要外部版本存档 | Release 页面含文件下载链接 + SOP checklist |
 
 ## 4. 使用建议
 1. 先从 `docs/README.md` 进入对应层级文档。
@@ -35,4 +37,5 @@
    - JSON 解析异常 → 优先检查是否为 UTF-8 BOM 编码问题（使用 `utf-8-sig`）
    - skip_train 模式报告缺失 → 检查下游脚本是否有条件分支处理跳过的阶段
    - skip_train 快捷通道未生效 → 确认 `-Stage full` 且 config 中 `skip_train: true`，否则不触发阶段跳过
-   - 彩色 GT 指标缺失 → 确认 `compare_groundtruth.py` 已包含 `_load_rgb()`/`_ssim_color()`/`_psnr_color()`
+| 彩色 GT 指标缺失 → 确认 `compare_groundtruth.py` 已包含 `_load_rgb()`/`_ssim_color()`/`_psnr_color()`
+   - 里程碑模型存档 → 文件 gitignored / 超 100 MB → 用 GitHub Releases + gh CLI（`GH_TOKEN` 环境变量），notes 含管道符时先写临时文件再 `--notes-file`
