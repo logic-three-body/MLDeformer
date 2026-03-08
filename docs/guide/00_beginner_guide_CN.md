@@ -118,6 +118,7 @@ MLDeformerSample/
 │   ├── 03_dataset_pipeline/        ← 数据制作流程
 │   ├── 04_train_infer/             ← 训练推理实操
 │   ├── 05_skill_analogy/           ← Copilot Skill（可直接调用）
+│   ├── operation/                  ← Agent 操作机理（如何解析 HIP / UE、如何串联双软件、如何调试）
 │   ├── guide/                      ← 新手导航（本文件）
 │   ├── milestones/                 ← 里程碑记录
 │   ├── memory/                     ← 历史 checkpoint（调试记录）

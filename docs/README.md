@@ -202,6 +202,7 @@ pipeline\hou2ue\runs\<timestamp>\gt_compare\
 | [04_train_infer/](04_train_infer/) | 训练操作步骤 · skip_train 模式 · 推理链 · Profiling & Debug 指南 |
 | [05_skill_analogy/](05_skill_analogy/) | Skill 类比矩阵 · 5 个 Agent-invokable SKILL.md · Prototype 闭环总结 |
 | [06_appendix/](06_appendix/) | UE5 源码 7 层符号索引（含 `rg` 搜索命令） |
+| [operation/](operation/) | agent 实际如何定位 HIP / UE 场景、串联 Houdini 与 UE、以及依赖哪些脚本 / report / bridge 做排障 |
 | [memory/](memory/) | 阶段性进度检查点（skip_train 验证 · unified pipeline · 完整验证 P1–P5） |
 
 ---

@@ -92,7 +92,13 @@
 |------|------|
 | [06_appendix/README_Source_References_CN.md](06_appendix/README_Source_References_CN.md) | UE5 源码 7 层符号索引（每层：文件绝对路径 + 关键符号 + `rg` 搜索命令）；防行号漂移维护策略 |
 
-### 2.9 `docs/memory` — 进度检查点（归档用）
+### 2.9 `docs/operation` — 操作与排障机制
+
+| 文件 | 说明 |
+|------|------|
+| [operation/README_Agent_Operation_CN.md](operation/README_Agent_Operation_CN.md) | 说明 agent 如何读取 HIP / UE 场景信息、如何通过 `run_all.ps1` 串联 Houdini 与 UE、如何依赖 C++ bridge / manifest / report 做定位与调试 |
+
+### 2.10 `docs/memory` — 进度检查点（归档用）
 
 | 文件 | 说明 |
 |------|------|
