@@ -32,8 +32,9 @@ num_iterations: 25000
 | 模型大小 | 207.1 MB（uasset，UE 内部压缩） |
 | 最终 loss | ~0.011 |
 | gt_source_capture | ✅ 完成 |
-| gt_compare | 进行中 |
-| ssim_mean | **待定** |
+| gt_compare | ✅ 完成 |
+| ssim_mean | **0.9005** |
+| 达标 | ❌ 未达标（目标 ≥ 0.91）|
 
 **视觉质量问题（frame 1054）**：
 > 上臂肌肉在特定姿态下与参考存在可感知的形变偏差。
@@ -47,19 +48,45 @@ num_iterations: 25000
 
 ---
 
-## W-2 备用调参（仅在 W-1 未达 0.91 时执行）
+## W-2A 备用调参（256 morphs + 256 neurons）——已完成
 
-### 聚焦问题：上臂形变精度不足（frame 1054 观察）
+**配置**：`global_num_neurons_per_layer: 256`（128→256）
 
-| 选项 | 改动 | 假设 | 预期影响 |
-|------|------|------|---------|
-| **W-2A（优先）** | `global_num_neurons_per_layer: 256` | 更宽网络提升上臂姿态预测精度 | 训练时间 +30%，模型 +10% |
-| **W-2B** | `global_num_morph_targets: 512` | 更多 morphs 让上臂形态专门化 | 训练时间 +50%，模型 +50% |
-| **W-2C** | A + B 组合 | 最大容量，对 frame 1054 问题最有效 | 训练时间 +80% |
+**W-2A 结果**：
+| 项目 | 值 |
+|------|-----|
+| ended_at | 2026-03-08T13:35:42Z |
+| ssim_mean | **0.9006**（vs W-1 0.9005，提升 +0.0001）|
+| ssim_p05 | 0.8120 |
+| ms_ssim | 0.8670 |
+| psnr | 29.26 dB |
+| 达标 | ❌ 未达标 |
 
-每个选项均需完整验证链（train → gt_source_capture → gt_compare → report）。
+> **关键结论**：neurons 翻倍提升几乎为零（δ = +0.0001）。morphs 和 neurons 均非瓶颈。
+> 三次实验累计：Phase V(0.8999) → W-1(+0.0006) → W-2A(+0.0001) = **总提升 +0.0007**。
+> 新假设：训练数据覆盖度（pose distribution）或 morph 数量需大幅增加才能送出改善。
 
-### 辅助调查（W-2 期间并行）：
+---
+
+## W-2B 备用调参（512 morphs ——**当前执行中**）
+
+**动机**：全局 512 morphs 让上臂区域获得更多全知形态化，测试 morph 数量大幅增加对质量上限的影响。
+
+**配置**：
+```yaml
+global_num_morph_targets: 512  # 256 → 512
+global_num_neurons_per_layer: 256  # 保持 W-2A
+```
+
+---
+
+## W-2C 备选（512 morphs + 3 layers，待 W-2B 结果决策）
+
+| 选项 | 改动 | 假设 | 条件 |
+|------|------|------|------|
+| **W-2C** | morphs=512, neurons=256, layers=3 | 更深网络提升上臂复杂姿态建模 | ssim(W-2B) < 0.91 |
+
+### 辅助调查（待 W-2B 无改善时启动）：
 - 提取 gt_compare 逐帧 ssim 数据，确认 frame 1054 区域（1000–1100）ssim 分布
 - 检查 5kGreedyROM 训练集中上臂极端姿态覆盖密度
 - 评估 p05 帧是否集中在上臂大幅运动区段

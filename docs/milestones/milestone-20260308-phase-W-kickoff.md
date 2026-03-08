@@ -1,7 +1,7 @@
 # Milestone: Phase W kickoff (Global 256 + QC gate)
 
 日期：2026-03-08  
-状态：**进行中 — W-1 完成（ssim=0.9005，未达标），W-2A 进行中**
+状态：**进行中 — W-2A 完成（ssim=0.9006，未达标），W-2B 进行中**
 
 ---
 
@@ -75,6 +75,35 @@ ArmouryCrate（ASUS GPU 超频工具）在 GPU 高负载约 5–12 分钟后应�
 
 > 分析：morph 数翻倍效果微弱，瓶颈在网络容量（隐藏层宽度）。W-2A 增加 neurons_per_layer 128→256，预期提升上臂等细节区域的权重预测精度。
 
+### W-2A 实测结果（2026-03-08 22:02 KST）
+
+| 参数 | 值 |
+|------|-----|
+| 模式 | `global` |
+| `global_num_morph_targets` | 256 |
+| `global_num_hidden_layers` | 2 |
+| `global_num_neurons_per_layer` | **256**（128→256 翻倍）|
+| `num_iterations` | 25000 |
+| train_report.json | `status: success`，`ended_at: 2026-03-08T13:35:42Z` |
+| gt_compare | `status: success`，`ended_at: 2026-03-08T13:02:21Z` |
+
+#### W-2A 质量指标（1560 帧）
+
+| 指标 | W-2A（256 neurons）| W-1（128 neurons）| 变化 | 阈值 | 状态 |
+|------|-----------------|---------------------|------|------|------|
+| `ssim_mean` | **0.9006** | 0.9005 | +0.0001 | ≥ 0.91 | ❌ 未达标 |
+| `ssim_p05` | **0.8120** | 0.8122 | -0.0002 | ≥ 0.70 | ✅ |
+| `psnr_mean` | **29.26 dB** | 29.24 dB | +0.02 | ≥ 22.0 | ✅ |
+| `ms_ssim_mean` | **0.8670** | 0.8664 | +0.0006 | ≥ 0.80 | ✅ |
+| `de2000_mean` | **2.141** | 2.144 | -0.003 | ≤ 8.0 | ✅ |
+| `edge_iou_mean` | **0.9211** | 0.9202 | +0.0009 | ≥ 0.82 | ✅ |
+
+> **关键发现**：neurons_per_layer 翻倍（128→256）效果同样微弱（δssim = +0.0001）。
+> **架构容量（morphs 数量、neurons 宽度）均非瓶颈。**
+> 三阶段对比：Phase V(0.8999) → W-1(+0.0006) → W-2A(+0.0001)，合计提升仅 +0.0007。
+> 下一假设：训练数据覆盖度（5kGreedyROM pose distribution）或 morph targets 数量需大幅增加（512）。
+> → W-2B：`global_num_morph_targets` 256→512（neurons 256 保持）。
+
 ---
 
 ## 四、Kickoff 阶段完成项
@@ -88,6 +117,9 @@ ArmouryCrate（ASUS GPU 超频工具）在 GPU 高负载约 5–12 分钟后应�
 
 - [x] gt_compare 完成，W-1 ssim=0.9005（未达标）
 - [x] W-2A 触发：`global_num_neurons_per_layer` 128→256
-- [ ] W-2A 训练 + 验证链 → 读取 ssim
+- [x] W-2A 训练完成（ssim=0.9006，未达标）
+- [x] W-2A 验证链完成（gt_source + gt_compare）
+- [ ] W-2B 执行：`global_num_morph_targets` 256→512
+- [ ] W-2B 验证链 → 读取 ssim
 - [ ] 记录最终指标，写入 Phase W 闭环里程碑
 - [ ] 调查 frame 1054 上臂形变根因（per-frame ssim 热图）
