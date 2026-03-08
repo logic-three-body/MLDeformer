@@ -1,7 +1,7 @@
 # Milestone: Phase W kickoff (Global 256 + QC gate)
 
-日期：2026-03-08
-状态：**进行中 — W-1 训练已完成，验证链进行中**
+日期：2026-03-08  
+状态：**进行中 — W-1 完成（ssim=0.9005，未达标），W-2A 进行中**
 
 ---
 
@@ -19,7 +19,22 @@
 | 训练时长 | ~43 分钟（含 ArmouryCrate 导致的 2 次重试，有效训练约 41 分钟）|
 | train_report.json | `status: success`，`ended_at: 2026-03-08T10:39:14Z` |
 | gt_source_capture | `status: success`，`ended_at: 2026-03-08T10:48:01Z` |
-| gt_compare | 进行中（1560 帧，~20 分钟） |
+| gt_compare | `status: success`，`ended_at: 2026-03-08T11:53:29Z` |
+
+### W-1 质量指标（1560 帧）
+
+| 指标 | W-1（256 morphs）| Phase V（128 morphs）| 变化 | 阈值 | 状态 |
+|------|-----------------|---------------------|------|------|------|
+| `ssim_mean` | **0.9005** | 0.8999 | +0.0006 | ≥ 0.91 | ❌ 未达标 |
+| `ssim_p05` | **0.8122** | 0.8122 | 0 | ≥ 0.70 | ✅ |
+| `psnr_mean` | **29.24 dB** | 29.15 dB | +0.09 | ≥ 22.0 | ✅ |
+| `ms_ssim_mean` | **0.8664** | 0.8659 | +0.0005 | ≥ 0.80 | ✅ |
+| `de2000_mean` | **2.144** | 2.156 | -0.012 | ≤ 8.0 | ✅ |
+| `edge_iou_mean` | **0.9202** | 0.9200 | +0.0002 | ≥ 0.82 | ✅ |
+
+> **关键观察**：256 morphs vs 128 morphs 的改善极其微小（δssim = +0.0006）。
+> morphs 数量不是瓶颈，**网络宽度（neurons_per_layer = 128）是容量限制处**。
+> → W-2A：将 `global_num_neurons_per_layer` 从 128 提升至 256。
 
 ### ArmouryCrate 崩溃记录（W-1 训练阶段）
 | PID | 迭代范围 | 时长 | 备注 |
@@ -56,8 +71,9 @@ ArmouryCrate（ASUS GPU 超频工具）在 GPU 高负载约 5–12 分钟后应�
 | **W-2B** | `global_num_morph_targets: 512`（256→512）| 更多 morphs 允许上臂形态专门化 | ~+50% 大小 |
 | **W-2C** | A + B 组合 | 最大容量配置 | ~+70% 大小 |
 
-触发条件：**W-1 ssim < 0.91** → 按 A → B → C 顺序执行，每次完整验证链。  
-如 W-1 ssim ≥ 0.91：进行闭环，frame 1054 问题记录为已知轻微缺陷。
+**W-1 ssim = 0.9005 < 0.91 → W-2A 已触发（2026-03-08）**
+
+> 分析：morph 数翻倍效果微弱，瓶颈在网络容量（隐藏层宽度）。W-2A 增加 neurons_per_layer 128→256，预期提升上臂等细节区域的权重预测精度。
 
 ---
 
@@ -70,7 +86,8 @@ ArmouryCrate（ASUS GPU 超频工具）在 GPU 高负载约 5–12 分钟后应�
 
 ## 五、待闭环项
 
-- [ ] gt_compare 完成，读取 W-1 ssim_mean
-- [ ] 按 ssim 决策：≥0.91 闭环 / <0.91 启动 W-2A
+- [x] gt_compare 完成，W-1 ssim=0.9005（未达标）
+- [x] W-2A 触发：`global_num_neurons_per_layer` 128→256
+- [ ] W-2A 训练 + 验证链 → 读取 ssim
 - [ ] 记录最终指标，写入 Phase W 闭环里程碑
 - [ ] 调查 frame 1054 上臂形变根因（per-frame ssim 热图）
