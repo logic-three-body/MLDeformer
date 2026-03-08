@@ -1,7 +1,7 @@
 # Milestone: Phase W kickoff (Global 256 + QC gate)
 
 日期：2026-03-08  
-状态：**进行中 — W-2A 完成（ssim=0.9006，未达标），W-2B 进行中**
+状态：**进行中 — W-2B 完成（ssim=0.9000，未达标），W-2C 待决策**
 
 ---
 
@@ -104,6 +104,35 @@ ArmouryCrate（ASUS GPU 超频工具）在 GPU 高负载约 5–12 分钟后应�
 > 下一假设：训练数据覆盖度（5kGreedyROM pose distribution）或 morph targets 数量需大幅增加（512）。
 > → W-2B：`global_num_morph_targets` 256→512（neurons 256 保持）。
 
+### W-2B 实测结果（2026-03-08 23:37 KST）
+
+| 参数 | 值 |
+|------|-----|
+| 模式 | `global` |
+| `global_num_morph_targets` | **512**（256→512 翻倍）|
+| `global_num_hidden_layers` | 2 |
+| `global_num_neurons_per_layer` | 256 |
+| `num_iterations` | 25000 |
+| train_report.json | `status: success`，`ended_at: 2026-03-08T15:03:00Z` |
+| gt_compare | `status: success`，`ended_at: 2026-03-08T15:37:43Z` |
+
+#### W-2B 质量指标（1560 帧）
+
+| 指标 | W-2B（512 morphs）| W-2A（256 morphs）| W-1（256 morphs, 128n）| 变化 vs W-2A | 阈值 | 状态 |
+|------|-----------------|---------------------|------|------|------|------|
+| `ssim_mean` | **0.9000** | 0.9006 | 0.9005 | **-0.0006** | ≥ 0.91 | ❌ 未达标 |
+| `ssim_p05` | **0.8121** | 0.8120 | 0.8122 | +0.0001 | ≥ 0.70 | ✅ |
+| `psnr_mean` | **29.18 dB** | 29.26 dB | 29.24 dB | -0.08 | ≥ 22.0 | ✅ |
+| `ms_ssim_mean` | **0.8661** | 0.8670 | 0.8664 | -0.0009 | ≥ 0.80 | ✅ |
+
+> ⚠️ **W-2B 退步警告**：512 morphs 相比 256 morphs ssim 下降 -0.0006（0.9000 vs 0.9006）。
+> 原因分析：更多 morph targets 在相同 25k iters 内收敛不足（欠拟合），导致轻微退步。
+> 四轮实验汇总：Phase V(0.8999) → W-1(0.9005) → W-2A(0.9006) → W-2B(0.9000)。
+> **结论：ssim 上限约在 0.90 附近，与架构容量配置无关**。根因可能是：
+> 1. 训练数据（5kGreedyROM）pose 覆盖度不足
+> 2. 需要更多训练迭代（25k → 50k）
+> 3. 学习率策略或损失函数需调整
+
 ---
 
 ## 四、Kickoff 阶段完成项
@@ -119,7 +148,7 @@ ArmouryCrate（ASUS GPU 超频工具）在 GPU 高负载约 5–12 分钟后应�
 - [x] W-2A 触发：`global_num_neurons_per_layer` 128→256
 - [x] W-2A 训练完成（ssim=0.9006，未达标）
 - [x] W-2A 验证链完成（gt_source + gt_compare）
-- [ ] W-2B 执行：`global_num_morph_targets` 256→512
-- [ ] W-2B 验证链 → 读取 ssim
+- [x] W-2B 执行：`global_num_morph_targets` 256→512（ssim=0.9000，局部下降！）
+- [ ] 逐帧 ssim 分析（frame 1054 区域 1000–1100）
+- [ ] W-2C / 数据培训策略决策会议
 - [ ] 记录最终指标，写入 Phase W 闭环里程碑
-- [ ] 调查 frame 1054 上臂形变根因（per-frame ssim 热图）
