@@ -94,58 +94,58 @@ global_num_neurons_per_layer: 256  # 保持 W-2A
 
 ---
 
-## W-2C 전최종（256 morphs + 256 neurons + 50k iters——**완료**）
+## W-2C 最终实验（256 morphs + 256 neurons + 50k iters——**已完成**）
 
-> **중요 배경**: ue_setup을 먼저 실행한 첫 번째 실험. W-1/W-2A/W-2B는 모두 Phase V 구조(128m/128n)로 실제 훈련됨.
-> VRAM 증거: W-1/2A/2B = 1.14 GB (Phase V), W-2C = **1.79 GB** (256 neurons 실제 적용 확인).
+> **重要背景**：这是 Phase W 中第一次先执行 `-Stage ue_setup` 的实验。W-1/W-2A/W-2B 均未重跑 ue_setup，实际沿用 Phase V 架构（128m/128n）训练。
+> VRAM 证据：W-1/2A/2B = 1.14 GB（= Phase V），W-2C ue_setup 重跑后 = **1.79 GB**（确认 256 neurons 生效）。
 
-**설정**:
+**配置**：
 ```yaml
 global_num_morph_targets: 256
 global_num_neurons_per_layer: 256
 num_iterations: 50000
 ```
 
-**W-2C 결과**:
-| 항목 | 값 |
+**W-2C 结果**：
+| 项目 | 值 |
 |------|-----|
-| ue_setup | success, ended_at: 2026-03-08T16:00:00Z (1.79 GB 확인) |
+| ue_setup | success, ended_at: 2026-03-08T16:00:00Z（1.79 GB 确认）|
 | ended_at | 2026-03-08T19:23:26Z |
-| 최종 loss | ~0.00808 (vs Phase V ~0.011, **-27%**) |
-| ssim_mean | **0.9004**（vs W-2A 0.9006, -0.0002） |
+| 最终 loss | ~0.00808（vs Phase V ~0.011，**-27%**）|
+| ssim_mean | **0.9004**（vs W-2A 0.9006，-0.0002）|
 | ssim_p05 | 0.8104 |
 | ms_ssim | 0.8657 |
-| psnr | **29.57 dB**（vs W-2A 29.26, **+0.31 dB**）|
-| de2000 | **2.138**（vs W-2A 2.141, 소폭 개선）|
+| psnr | **29.57 dB**（vs W-2A 29.26，**+0.31 dB**）|
+| de2000 | **2.138**（vs W-2A 2.141，微幅改善）|
 | edge_iou | 0.9208 |
-| 달성 | ❌ 미달（목표 ≥ 0.91）|
+| 达标 | ❌ 未达标（目标 ≥ 0.91）|
 
-> **W-2C 핵심 결론**:
-> - Loss -27%에도 ssim은 거의 변화 없음 → **loss와 ssim 해리(decouple)**.
-> - Phase W 5회 실험(Phase V → W-2C) ssim 범위: 0.900–0.9006 (진폭 0.0007).
-> - NMM Global 모드: morphs/neurons 용량, 반복 횟수 모두 ssim 병목이 아님.
-> - **W-3 전략 전환 필요 (아래 참조)**.
+> **W-2C 关键结论**：
+> - Loss 降低 27% 但 ssim 几乎不变 → **loss 与 ssim 解耦**。
+> - Phase W 五轮实验（Phase V → W-2C）ssim 始终在 0.900–0.9006 区间震荡（振幅 0.0007）。
+> - NMM Global 模式：morphs/neurons 容量、迭代次数均非 ssim 瓶颈。
+> - **需要 W-3 策略转变（见下方）**。
 
 ---
 
-## W-3 전략 전환 방향（검토 중）
+## W-3 策略转变方向（评估中）
 
-Phase W 결과 요약:
+Phase W 结果汇总：
 
-| 실험 | 실제 구조 | ssim | 비고 |
+| 实验 | 实际架构 | ssim | 备注 |
 |------|---------|------|------|
-| Phase V | 128m/128n/25k | 0.8999 | 기준 |
-| W-1 | 128m/128n/25k (ue_setup 미적용) | 0.9005 | 가짜 256m |
-| W-2A | 128m/128n/25k (ue_setup 미적용) | 0.9006 | 가짜 256n |
-| W-2B | 128m/128n/25k (ue_setup 미적용) | 0.9000 | 가짜 512m |
-| W-2C | **256m/256n/50k** (ue_setup 정상) | **0.9004** | 첫 진짜 실험 |
-| 목표 | Epic Ref | **0.9142** | 차이 -0.0138 |
+| Phase V | 128m/128n/25k | 0.8999 | 基准 |
+| W-1 | 128m/128n/25k（ue_setup 未重跑）| 0.9005 | 实为 Phase V 重复 |
+| W-2A | 128m/128n/25k（ue_setup 未重跑）| 0.9006 | 实为 Phase V 重复 |
+| W-2B | 128m/128n/25k（ue_setup 未重跑）| 0.9000 | 实为 Phase V 重复 |
+| W-2C | **256m/256n/50k**（ue_setup 正常）| **0.9004** | 首次真实实验 |
+| 目标 | Epic Refference | **0.9142** | 差距 -0.0138 |
 
-**가능한 W-3 접근 방식**:
-1. **Local 모드 전환**: 신체 구역별 전용 NMM → 상완 전용 용량 확보
-2. **NearestNeighborModel(NNM)**: 유사 포즈 기반 보간 → 데이터 커버리지 문제 완화 가능
-3. **훈련 데이터 분석**: 5kGreedyROM pose 분포, frame 1054 유사 포즈 커버리지 확인
-4. **Ground truth 품질 검토**: gt_source 렌더링 자체에 ceiling이 있는지 확인
+**W-3 可能方向**：
+1. **Local 模式切换**：各区域独立 NMM → 上臂获得专属容量
+2. **NearestNeighborModel（NNM）**：基于相似姿态插值 → 可能缓解数据覆盖问题
+3. **训练数据分析**：检查 5kGreedyROM pose 分布，确认 frame 1054 类似姿态覆盖密度
+4. **Ground truth 质量审查**：确认 gt_source 渲染本身是否存在 ssim 上限
 
 ---
 
