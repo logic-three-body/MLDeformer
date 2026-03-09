@@ -11,6 +11,7 @@
 |------|------|
 | [README.md](README.md) | **主导航入口**（数据流、模块介绍、Skill 使用、0-to-1 快速上手） |
 | [INDEX.md](INDEX.md) | 本文件：全量文件树索引 |
+| [milestones/milestone-20260309-phase-W-closure.md](milestones/milestone-20260309-phase-W-closure.md) | **最新闭环里程碑**：Phase W W-3B NNM smoke PASS，`ssim_mean=0.9960` |
 | `ML Deformer 与 Groom 深度研究.pdf` | 配套 PDF 研究报告（离线阅读用） |
 
 ---
@@ -105,6 +106,14 @@
 | [memory/checkpoint-20260225-skip-train-validated.md](memory/checkpoint-20260225-skip-train-validated.md) | 归档：训练非确定性根因 + ABC 坐标双重变换 bug 发现 + skip_train 方案验证 |
 | [memory/checkpoint-20260225-unified-pipeline-validated.md](memory/checkpoint-20260225-unified-pipeline-validated.md) | 归档：windowed SSIM 方法论（11×11 uniform filter）+ coord 自动检测（Z-up 阈值） |
 | [memory/checkpoint-20260226-full-validation-and-optimizations.md](memory/checkpoint-20260226-full-validation-and-optimizations.md) | **当前权威**：P1–P5 完整验证（full profile 46 帧 · 3× 稳定性 · skip_train shortcut · color GT · 下装 demo） |
+
+### 2.11 `docs/milestones` — 阶段性成果
+
+| 文件 | 说明 |
+|------|------|
+| [milestones/milestone-20260308-phase-V-closure.md](milestones/milestone-20260308-phase-V-closure.md) | Phase V 闭环：NMM Global 128 morphs pass |
+| [milestones/milestone-20260308-phase-W-kickoff.md](milestones/milestone-20260308-phase-W-kickoff.md) | Phase W 执行过程记录：W-1 / W-2 / W-3A / W-3B 详细过程 |
+| [milestones/milestone-20260309-phase-W-closure.md](milestones/milestone-20260309-phase-W-closure.md) | Phase W 闭环：W-3B NNM smoke pass，解释 Local vs NNM 差异与最终结论 |
 
 ---
 

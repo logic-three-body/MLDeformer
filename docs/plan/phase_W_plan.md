@@ -1,8 +1,8 @@
 # Plan: Phase W - challenge ssim >= 0.91 (align Epic Refference 0.9142)
 
 ## TL;DR
-Phase V 稳定在 ssim=0.8999。Phase W 目标 ssim ≥ 0.91，通过增加 NMM Global morph targets（128 → 256）实现。  
-W-1 训练已完成（2026-03-08），frame 1054 上臂肌肉形变问题已记录，根据 ssim 结果决定是否启动 W-2。
+Phase V 稳定在 ssim=0.8999。Phase W 最终没有靠继续扩容 Global NMM 达标，而是在 W-3B 切换到 NNM 后闭环成功。  
+最终隔离 smoke 结果：`ssim_mean=0.9960`，`ssim_p05=0.9929`，主瓶颈窗口 `0588–0597 / 0600–0699` 已被实质性修复。
 
 ## 基线
 - Phase V：Global 128 morphs，207 MB，ssim=0.8999，loss=0.011，25k iter，~16 min
@@ -41,6 +41,19 @@ num_iterations: 25000
 - 位置：Main Sequence frame 1054 / 1560（约 67.6%）
 - 问题：Global morphs 分布全身，上臂专属容量有限；网络宽度（128 neurons）预测精度受限
 
+**上臂 / 脖颈重点观测帧（基于 W-2C gt_compare_report.json）**：
+
+| 优先级 | 帧范围 | W-2C ssim_mean | 备注 |
+|--------|--------|----------------|------|
+| 🔴 最差群 | **0588 – 0597** | ~0.795 – 0.800（body_roi ~0.73） | 全序列最低连续帧群，上臂/脖颈形变集中区 |
+| 🔴 最差窗口 | 0600 – 0699 | 0.8302 | 全程均值最低百帧窗口 |
+| 🟡 次差窗口 | 0500 – 0599 | 0.8380 | 包含最差帧群 |
+| 🟡 肩颈段 | 0100 – 0199 | 0.8462 | 脖颈/肩部动作集中，重点观察颈侧形变 |
+| 🟢 对照（优良段） | 1200 – 1299 | 0.9735 | 用于确认基准渲染正确性 |
+
+> **注**：`LS_NMM_Local` 渲染（`Saved/MovieRenders/LS_NMM_Local.*.png`）仅含帧 0000 – 0893，不覆盖 frame 1054。
+> 新实验视觉对比优先检查 **frame 0588 – 0597**（最差群）与 **frame 0100 – 0199**（肩颈段）。
+
 **决策门**：
 - ssim ≥ 0.91 → Phase W 闭环，frame 1054 记录为已知轻微缺陷
 - 0.83 ≤ ssim < 0.91 → 启动 W-2 架构调参（见下方）
@@ -72,10 +85,6 @@ num_iterations: 25000
 
 **动机**：全局 512 morphs 让上臂区域获得更多全知形态化，测试 morph 数量大幅增加对质量上限的影响。
 
-**配置**：
-```yaml
-global_num_morph_targets: 512  # 256 → 512
-global_num_neurons_per_layer: 256  # 保持 W-2A
 ```
 
 **W-2B 结果**：
@@ -141,11 +150,75 @@ Phase W 结果汇总：
 | W-2C | **256m/256n/50k**（ue_setup 正常）| **0.9004** | 首次真实实验 |
 | 目标 | Epic Refference | **0.9142** | 差距 -0.0138 |
 
+**W-3 焦点分析（基于 `phase_w_focus_analysis.md`，2026-03-09）**：
+- 主瓶颈不是 frame 1054，而是 **0588 – 0597** 连续最差簇：`ssim_mean=0.7984`，`body_roi_ssim_mean=0.7313`
+- 最差百帧窗口是 **0600 – 0699**：`ssim_mean=0.8302`，`body_roi_ssim_mean=0.7530`
+- frame **1054** 实测 `ssim=0.8822`，明显高于最差簇，属于**次级视觉 QA 点**，不应继续作为主优化目标
+- 结论：**不要再继续做 Global morphs / neurons / iterations 扩容试错**
+
 **W-3 可能方向**：
-1. **Local 模式切换**：各区域独立 NMM → 上臂获得专属容量
-2. **NearestNeighborModel（NNM）**：基于相似姿态插值 → 可能缓解数据覆盖问题
+1. **受限 Local 模式**：仅在显式 per-bone morph cap 下尝试局部容量，避免重回 Phase U 的 Local 过参数化失败
+2. **NearestNeighborModel（NNM）**：基于相似姿态插值 → 可能缓解局部姿态覆盖不足问题
 3. **训练数据分析**：检查 5kGreedyROM pose 分布，确认 frame 1054 类似姿态覆盖密度
 4. **Ground truth 质量审查**：确认 gt_source 渲染本身是否存在 ssim 上限
+
+**W-3A 推荐顺序**：
+1. 先做受限 Local 或 NNM 准备，不再做新的 Global 扩容实验
+2. 视觉回归优先检查 **0588 – 0597** 与 **0100 – 0199**
+3. frame **1054** 仅保留为覆盖到该帧时的次级复核点
+
+**W-3A 已完成验证（2026-03-09，失败）**：
+```yaml
+config: UE57/pipeline/hou2ue/config/pipeline.phase_w_w3a_local.yaml
+run_dir: UE57/pipeline/hou2ue/workspace/runs/20260309_144941_smoke_w3a_local
+mode: local
+local_num_morph_targets_per_bone: 1
+num_iterations: 25000
+```
+
+闭环结果：训练、`gt_reference_capture`、`gt_source_capture` 全部成功，但 `gt_compare` 指标严重退化，`ssim_mean=0.5550`、`ssim_p05=0.4389`、`psnr_mean=14.37`、`edge_iou_mean=0.4619`、`body_roi_ssim_mean=0.5181`，远低于 Phase W 阈值，也明显差于 W-2C 的 `ssim_mean≈0.9004`。
+
+补充结论：`report` 阶段的 `outputs.bin` QC 仍然通过（`p50_max_cm=4.02 <= 30`），因此这次失败更接近**模型/架构退化**，而不是 smoke 数据或输出缓存质量问题。
+
+> 该配置是“最小受限 Local”试探版：先显式限制每骨骼 morph 容量，再判断 Local 路线是否值得继续，而不是直接回到默认 Local。
+
+> 现结论：`local_num_morph_targets_per_bone=1` 的 W-3A 可判定为**失败分支**，不应继续在该配置上追加训练时间；W-3 后续应优先转向 **NNM** 或更有根据的数据/GT 审查。
+
+**W-3B 已验证成功（NNM）**：
+```yaml
+config: UE57/pipeline/hou2ue/config/pipeline.phase_w_w3b_nnm.yaml
+run_dir: UE57/pipeline/hou2ue/workspace/runs/20260309_164800_smoke_w3b_nnm
+asset_path: /Game/Characters/Emil/Deformers/MLD_NMMl_flesh_upperBody
+model_type: NNM
+neighbor_poses: /Game/Characters/Emil/Animation/MLD_train/upperBodyFlesh_5kGreedyROM
+neighbor_meshes_template: /Game/Characters/Emil/GeomCache/MLD_Train/GC_upperBodyFlesh_5kGreedyROM
+num_pca_coeffs: 64
+num_basis_per_section: 64
+num_iterations: 5000
+```
+
+已完成 `ue_setup`，隔离 `ue_setup_report.json` 显示 `flesh` 资产已按该配置切换为 `model_type=NNM`，训练输入解析到 `upperBodyFlesh_5kGreedyROM` / `GC_upperBodyFlesh_5kGreedyROM`。
+
+该配置沿用当前已验证的 flesh 训练输入，只把 `flesh` 资产切换为单 section 的 NNM 试探版，用于检验“相似姿态插值”是否能改善 W-2C 在 **0588 – 0597 / 0600 – 0699** 的局部瓶颈。
+
+训练阶段经历 2 次启动级失败后自动重试成功：前两次均在保存 checkpoint 前退出，第 3 次尝试完成训练并生成 `train_report.json`（`status=success`，`ended_at=2026-03-09T10:04:22Z`）。
+
+隔离验证链也已完成：`gt_reference_capture`、`gt_source_capture`、`gt_compare`、`report` 全部 `success`。关键指标如下：
+
+- `ssim_mean=0.9960`
+- `ssim_p05=0.9929`
+- `psnr_mean=52.28 dB`
+- `psnr_min=44.69 dB`
+- `edge_iou_mean=0.9942`
+- `ms_ssim_mean=0.9979`
+- `de2000_mean=0.2339`
+- `body_roi_ssim_mean=0.9943`
+
+这组结果不仅显著高于 W-2C（`ssim_mean≈0.9004`），也实质性修复了 W-3 关注窗口：`0500 – 0599` 提升到 `ssim_mean=0.9946`，`0600 – 0699` 提升到 `ssim_mean=0.9964`，说明此前的主瓶颈簇在 NNM 路线上已被覆盖。
+
+另一个重要结论是：pipeline report 中的 `strict_thresholds_required`（`ssim_mean>=0.995`、`ssim_p05>=0.985`、`psnr_mean>=35`、`edge_iou>=0.97` 等）也全部满足，因此 W-3B 不只是“过线”，而是达到接近逐帧重合的 smoke 结果。
+
+附注：`report.outputs_bin_qc` 仍指向 `Intermediate/NeuralMorphModel/outputs.bin`，该 QC 在 NNM 分支上不应作为主要判定依据；W-3B 的接受结论应以隔离 run dir 中真实完成的 capture/compare 指标为准。
 
 ---
 
@@ -169,11 +242,33 @@ Phase W 结果汇总：
   -Config "D:/UE/Unreal Projects/MLDeformerSample/UE57/pipeline/hou2ue/config/pipeline.full_exec.yaml" `
   -Profile smoke
 
-# 验证链（含 QC gate）
+# 验证链（隔离 run dir，顺序执行）
+$cfg = "D:/UE/Unreal Projects/MLDeformerSample/UE57/pipeline/hou2ue/config/pipeline.phase_w_w3b_nnm.yaml"
+$runDir = "D:/UE/Unreal Projects/MLDeformerSample/UE57/pipeline/hou2ue/workspace/runs/20260309_164800_smoke_w3b_nnm"
+
 & "D:/UE/Unreal Projects/MLDeformerSample/UE57/pipeline/hou2ue/run_all.ps1" `
-  -Stage gt_source_capture,gt_compare,report `
-  -Config "D:/UE/Unreal Projects/MLDeformerSample/UE57/pipeline/hou2ue/config/pipeline.full_exec.yaml" `
-  -Profile smoke
+  -Stage gt_reference_capture `
+  -Config $cfg `
+  -Profile smoke `
+  -RunDir $runDir
+
+& "D:/UE/Unreal Projects/MLDeformerSample/UE57/pipeline/hou2ue/run_all.ps1" `
+  -Stage gt_source_capture `
+  -Config $cfg `
+  -Profile smoke `
+  -RunDir $runDir
+
+& "D:/UE/Unreal Projects/MLDeformerSample/UE57/pipeline/hou2ue/run_all.ps1" `
+  -Stage gt_compare `
+  -Config $cfg `
+  -Profile smoke `
+  -RunDir $runDir
+
+& "D:/UE/Unreal Projects/MLDeformerSample/UE57/pipeline/hou2ue/run_all.ps1" `
+  -Stage report `
+  -Config $cfg `
+  -Profile smoke `
+  -RunDir $runDir
 ```
 
 ---
@@ -183,14 +278,22 @@ Phase W 结果汇总：
 1. train_report.json status = success
 2. gt_compare ssim_mean ≥ 0.91（W-1 目标）
 3. report 阶段 outputs.bin QC gate 通过（p50_max ≤ 30 cm）
-4. frame 1054 上臂形变差异主观可接受
-5. 如达标：commit `feat: Phase W Global 256 morphs ssim>=0.91`
+4. **上臂 / 脖颈重点帧视觉确认**（参照 W-1 节"上臂 / 脖颈重点观测帧"表格）：
+  - frame **0588 – 0597**：上臂/脖颈最差群，确认新实验是否比 W-2C 有改善
+  - frame **0100 – 0199**：肩颈动作段，重点观察脖颈侧面与锁骨区形变
+  - frame **1200 – 1299**：优良对照段，确认渲染无异常
+  - frame **1054**：原始已知上臂问题帧（仅限覆盖该帧的渲染）
+5. 已达标：以 W-3B NNM 结果作为 Phase W 闭环版本归档
 
 ---
 
 ## 相关文件
 
 - `UE57/pipeline/hou2ue/config/pipeline.full_exec.yaml`
+- `UE57/pipeline/hou2ue/config/pipeline.phase_w_w3a_local.yaml`
 - `UE57/pipeline/hou2ue/scripts/build_report.py`
+- `UE57/pipeline/hou2ue/scripts/analyze_phase_w_focus.py`
+- `docs/milestones/milestone-20260309-phase-W-closure.md`
+- `UE57/pipeline/hou2ue/workspace/latest/smoke/reports/phase_w_focus_analysis.md`
 - `docs/milestones/milestone-20260308-phase-W-kickoff.md`
 - `docs/plan/phase_W_plan.md`

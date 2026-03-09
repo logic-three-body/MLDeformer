@@ -4,6 +4,8 @@
 > **UE 版本**：5.5 · 模型范围：Neural Morph Model (NMM)、Nearest Neighbor Model (NNM)、Groom Deformer  
 > 完整文档树见 [INDEX.md](INDEX.md)。
 
+> **最新里程碑**：Phase W 已闭环，当前 smoke 最优路线为 W-3B NNM，`ssim_mean=0.9960`。摘要见 [milestones/milestone-20260309-phase-W-closure.md](milestones/milestone-20260309-phase-W-closure.md)。
+
 ---
 
 ## 目录
