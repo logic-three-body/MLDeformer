@@ -111,6 +111,7 @@
 
 | 文件 | 说明 |
 |------|------|
+| [milestones/milestone-20260312-reference-local-vs-global-5.5.md](milestones/milestone-20260312-reference-local-vs-global-5.5.md) | Refference(UE5.5) `Local` vs `Global` 自对照：两者都健康，`Global` 略优；并确认关键 Houdini 训练资产在 `Refference/` 与 `UE57/` 两边内容一致 |
 | [milestones/milestone-20260308-phase-V-closure.md](milestones/milestone-20260308-phase-V-closure.md) | Phase V 闭环：NMM Global 128 morphs pass |
 | [milestones/milestone-20260308-phase-W-kickoff.md](milestones/milestone-20260308-phase-W-kickoff.md) | Phase W 执行过程记录：W-1 / W-2 / W-3A / W-3B 详细过程 |
 | [milestones/milestone-20260309-phase-W-closure.md](milestones/milestone-20260309-phase-W-closure.md) | Phase W 闭环：W-3B NNM smoke pass，解释 Local vs NNM 差异与最终结论 |

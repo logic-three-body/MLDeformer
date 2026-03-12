@@ -4,6 +4,8 @@
 **状态：** ✅ 闭环达成  
 **最终指标：** ssim_mean = **0.8999**（阈值 ≥ 0.83），9 项指标全部通过
 
+> **2026-03-12 更新说明**：本文档保留的是 Phase V 当时在 UE5.7 分支上的历史闭环结论，不应再被解读为“Global 是跨版本唯一正确答案”。最新验证见 [milestone-20260312-reference-local-vs-global-5.5.md](milestone-20260312-reference-local-vs-global-5.5.md)：在 `Refference + UE5.5` 中，`Local` 与 `Global` 都健康，且关键 Houdini 训练资产在 `Refference/` 与 `UE57/` 两边已验证一致。当前目标已转为定位 UE5.7 Neural Morph 实现/运行时差异。
+
 ---
 
 ## 一、执行摘要
@@ -15,11 +17,13 @@
 
 需要特别说明的是：**UE5.7 一开始出问题，并不是因为“UE5.7 引擎本身不可用”**，而是因为项目在从 UE5.5 / Epic Refference 迁移到 UE5.7 自训练链路时，先后偏离了参考工程的几个关键前提：
 
+> **术语说明**：本里程碑中的 `Refference` / `Reference` 有时指 `Refference/` 只读工程，有时指从该工程复制出的 Epic 预训练资产或 GT 对比基线。若未显式写成 `Refference/` 目录路径，下文优先按“参考资产 / 参考基线”理解，而不是默认等同于“已直接读取并确认过其原始工程配置”。
+
 1. **训练环境不可完全复现 UE5.5 参考权重**：跨 GPU / CUDA / cuDNN / PyTorch 栈重训存在非确定性，同配置不保证得到与 Refference 完全一致的权重；
 2. **Houdini → UE 数据链路早期存在坐标/单位问题**：ABC 导入一度存在双重坐标变换风险，后续又确认 smoke GC 存在单位换算错误，直接污染训练数据；
-3. **NMM 架构配置未对齐参考工程**：UE 默认 `Local` 模式被沿用到 UE5.7 训练，而 Epic Refference 实际对应的是 `Global` 128 morph targets；这才是最终导致 1680 MB 过大模型和 ssim≈0.66 的主根因。
+3. **NMM 架构配置未对齐参考基线**：UE 默认 `Local` 模式被沿用到 UE5.7 训练，而现有尺寸与效果证据更支持 Epic 参考资产接近 `Global` 128 morph targets，而非默认 `Local`；这才是最终导致 1680 MB 过大模型和 ssim≈0.66 的主根因之一。该判断主要来自尺寸、指标与 setup diff 的综合反推，不应表述成“已直接读取 Refference 原始工程并唯一确认”。
 
-因此，Phase V 的意义不仅是“把一个坏模型训好”，而是把 **UE5.5 参考工程中的有效约束条件** 重新识别并恢复到 UE5.7 流水线里。
+因此，Phase V 的意义应理解为：在当时那条 UE5.7 排障支线上，`Global 128` 是一个有效恢复路径。最新文档应再叠加一层边界：它解释了那条支线为何能通过，但不再单独构成“5.5 → 5.7 根因已唯一锁定”的证明。
 
 ---
 
@@ -35,7 +39,7 @@
 |------|----------|----------|----------|
 | 训练复现层 | 相同流程重跑后，指标无法稳定贴近 Refference | 跨硬件 / CUDA / cuDNN / PyTorch 的训练非确定性，导致权重不能 bit-exact 对齐 | 引入 `skip_train` 基线、区分“参考资产一致性”与“自训练质量” |
 | 数据链路层 | 新训练模型出现 near-black 帧、形变失真、2 GB 异常膨胀 | Houdini → UE 的 ABC / GeomCache 链路存在坐标与单位问题；smoke GC 顶点位移 p50 达 90.7 cm | 改用已验证的 PDG 原始 5kGreedyROM，并补充 QC 思路 |
-| 架构配置层 | 即便换回正常 GC，模型仍 1680 MB 且 ssim≈0.660 | UE5.7 训练沿用了 NMM 默认 `Local` 模式，而不是 Refference 的 `Global` 128 方案 | 在 `pipeline.full_exec.yaml` 中显式切到 `mode: global` + `global_num_morph_targets: 128` |
+| 架构配置层 | 即便换回正常 GC，模型仍 1680 MB 且 ssim≈0.660 | UE5.7 训练沿用了 NMM 默认 `Local` 模式，而不是与 Refference 参考资产量级和效果更一致的 `Global` 128 配置 | 在 `pipeline.full_exec.yaml` 中显式切到 `mode: global` + `global_num_morph_targets: 128` |
 
 换句话说，**UE5.7 一开始的“问题”本质上是迁移偏航**：
 不是单一 bug，而是“参考权重不可直接重训复现 + 训练数据链路一度有误 + 模型模式没有对齐参考架构”三者叠加。
@@ -139,14 +143,16 @@ Per-frame max-abs vertex offset distribution:
 
 ### 2026-03-07/08 Phase V2 — 根因闭合：Local vs Global 模式对比
 
-通过对 Refference 307 MB 模型进行参数反推：
+通过对 Refference 292-306 MB 参考资产进行尺寸级反推：
+
+> 下表中的 Refference 模式判断属于工作性结论：它解释了为什么 `Global 128` 能把模型容量和指标拉回到接近参考资产的范围，但它本身不是“直接从 Refference 原始工程读取出唯一配置”的证明。
 
 $$207\text{ MB} \approx 128 \times 200,000 \text{ verts} \times 3 \times 4 \text{ B} = 307 \text{ MB}$$
 
 | 维度 | Epic Refference（ssim=0.9142）| 我方 Local 模式（ssim=0.660）|
 |------|-------------------------------|-------------------------------|
-| **NMM 模式** | **Global** | Local（UE 默认）|
-| 形态目标数量 | **128**（`global_num_morph_targets`） | ~80 bones × 若干 = 480+ 局部基 |
+| **NMM 模式** | **更接近 Global**（基于尺寸/效果反推） | Local（UE 默认）|
+| 形态目标数量 | **更接近 128 个全局 morphs** | ~80 bones × 若干 = 480+ 局部基 |
 | 模型大小 | **306 MB** | **1680 MB**（5.76× 过大） |
 | 训练收敛损失 | ~0.01 | V-3 在 5401 iter 时仍 ≈ 1.44 |
 | 过拟合风险 | 低（全局基底共享约束） | 高（每骨骼独立，无共享约束） |

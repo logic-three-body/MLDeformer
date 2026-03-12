@@ -4,7 +4,7 @@
 > **UE 版本**：5.5 · 模型范围：Neural Morph Model (NMM)、Nearest Neighbor Model (NNM)、Groom Deformer  
 > 完整文档树见 [INDEX.md](INDEX.md)。
 
-> **最新里程碑**：Phase W 已闭环，当前 smoke 最优路线为 W-3B NNM，`ssim_mean=0.9960`。摘要见 [milestones/milestone-20260309-phase-W-closure.md](milestones/milestone-20260309-phase-W-closure.md)。
+> **最新进展**：已完成 [Refference(UE5.5) Local vs Global 自对照](milestones/milestone-20260312-reference-local-vs-global-5.5.md)。结论是：Refference 5.5 中 `Local` 和 `Global` 都健康，`Global` 仅略优；同时关键 Houdini 训练资产在 Refference 与 UE57 两边已验证 hash 一致。当前目标已更新为 **定位 UE5.7 Neural Morph 实现/运行时差异**，而不是继续怀疑训练数据是否对齐。
 
 ---
 
@@ -75,6 +75,10 @@ flowchart TD
 
 > **skip\_train 捷径**：`skip_train: true` 时，直接从 `Refference/` 复制已验证的三个 `.uasset` 文件，跳过 A→E 五个阶段，节省约 30% 时间（23 min vs 33 min）。验证结果：SSIM_mean = 0.9997，PSNR_min = 52.28，EdgeIoU = 0.9875。
 
+> **术语说明**：本文档中的 `Refference` / `Reference` 可能指 4 种不同对象：`Refference/` 目录本身、从该目录复制出来的 Epic 预训练资产、GT 对比里的 reference 侧帧、以及名称仍叫 reference 但日志里可能发生过 fallback 的捕获/导出步骤。若未特别说明，`Refference/` 表示目录；`Reference 资产` 表示复制出的 `.uasset`；`reference 帧` 表示对比口径的一侧画面。
+
+> **当前排查边界**：`upperBodyFlesh_5kGreedyROM` / `upperBodyFlesh_hero64` 及其对应 `GeomCache` 资产已经在 `Refference/` 与 `UE57/` 两边完成文件级一致性校验。后续如果 UE5.7 结果继续偏离，不应再优先怀疑 Houdini 训练资产不同步。
+
 ---
 
 ## 三、模块介绍
@@ -138,7 +142,7 @@ git clone <repo-url> "D:\UE\Unreal Projects\MLDeformerSample"
 
 ### Phase 2 · 快速验证（skip\_train 路径，≈ 23 min）
 
-> **推荐新手入门路径**：无需 Houdini，无需训练，直接使用 `Refference/` 中已验证的资产；  
+> **推荐新手入门路径**：无需 Houdini，无需训练，直接使用 `Refference/` 中已验证的预训练资产；  
 > 验证结果：SSIM = 0.9997 · PSNR = 52.28 · EdgeIoU = 0.9875（来源：[checkpoint-20260226](memory/checkpoint-20260226-full-validation-and-optimizations.md)）。
 
 **步骤**：

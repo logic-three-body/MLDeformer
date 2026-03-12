@@ -66,6 +66,9 @@ def _dump_asset(asset_path: str) -> Dict[str, Any]:
         "training_input_anims_json": str(_get_field_safe(result, "training_input_anims_json", "[]")),
         "nnm_sections_json": str(_get_field_safe(result, "nnm_sections_json", "[]")),
         "model_overrides_json": str(_get_field_safe(result, "model_overrides_json", "{}")),
+        "model_properties_json": str(_get_field_safe(result, "model_properties_json", "{}")),
+        "viz_settings_json": str(_get_field_safe(result, "viz_settings_json", "{}")),
+        "asset_properties_json": str(_get_field_safe(result, "asset_properties_json", "{}")),
     }
 
 

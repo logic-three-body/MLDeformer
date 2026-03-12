@@ -4,7 +4,7 @@
 > **版本**：UE 5.5（主分支）+ UE 5.7（`UE57/` 子目录）  
 > **更新日期**：2026-03-09
 
-> **最新里程碑**：Phase W 已闭环，W-3B NNM smoke 结果 `ssim_mean=0.9960`。如果你只想理解“为什么 Local 会失败而 NNM 会显著成功”，先读 [../milestones/milestone-20260309-phase-W-closure.md](../milestones/milestone-20260309-phase-W-closure.md)。
+> **最新里程碑**：已新增 [Refference(UE5.5) Local vs Global 自对照](../milestones/milestone-20260312-reference-local-vs-global-5.5.md)。它确认了两件事：一是 Refference 5.5 中 `Local` 和 `Global` 都健康；二是关键 Houdini 训练动画与 GeomCache 在 `Refference/` 和 `UE57/` 两边内容一致。当前主目标是继续定位 UE5.7 的实现差异。
 
 ---
 
@@ -82,8 +82,8 @@ Houdini 的 Vellum（布料）和 FEM（有限元）可以精确模拟次级形�
 | **模型大小** | ~200–300 MB（`global` 模式） | ~260–830 MB |
 | **关键参数** | `mode: global`，`global_num_morph_targets: 128` | `num_neighbors`，`num_pca_components` |
 
-> **陷阱**：NMM 默认为 **Local 模式**，会产生 1.6 GB 以上的过大模型并严重过拟合。  
-> 必须**显式配置 `mode: global`**（详见第 6 节）。
+> **重要边界**：不要把历史 UE5.7 分支上的经验过度泛化成“Local 一定错、Global 一定对”。
+> 在 `Refference + UE5.5` 的最新自对照里，`Local` 和 `Global` 都能得到很高质量结果；此前“必须显式切到 Global”只适用于当时那个 UE5.7 Phase V 排障分支，而不是对所有工程/版本都成立的定律。
 
 ### 2.5 一个这次项目里非常重要的实战经验
 
@@ -210,6 +210,8 @@ flowchart TD
 
 如果你只想验证管线本身、不想重新训练，可以启用 **skip_train** 模式：  
 直接使用 `Refference/` 中 Epic 预训练的 306 MB 模型，跳过阶段 ①–⑤，约省 30% 时间。
+
+> **术语说明**：后文出现 `Refference` / `Reference` 时，需要区分它究竟是在说参考工程目录、从参考工程复制出的预训练资产，还是 GT 对比中的 reference 侧帧。只有写成 `Refference/` 时，才明确指目录本身。
 
 ```yaml
 # pipeline.yaml 或 pipeline.full_exec.yaml
@@ -363,7 +365,7 @@ model_overrides:
 
 **数学解释**：
 $$\text{Global 207 MB} \approx 128 \text{ morphs} \times 200{,}000 \text{ verts} \times 3 \times 4 \text{ B}$$
-与 Epic Refference 306 MB 一致，说明架构匹配。
+与 Epic 参考资产的 292-306 MB 量级更接近，说明当前自训练配置在容量上更接近参考资产；这是一种基于尺寸的反推，不等同于已经直接读取并确认了 Refference 原始工程配置。
 
 ### 6.6 训练执行
 
